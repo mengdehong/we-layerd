@@ -237,6 +237,16 @@ impl WgpuRenderer {
             force_fallback_adapter: false,
         }))
         .ok_or_else(|| anyhow!("no suitable wgpu adapter found"))?;
+        let adapter_info = adapter.get_info();
+        info!(
+            backend = ?adapter_info.backend,
+            name = %adapter_info.name,
+            vendor = adapter_info.vendor,
+            device = adapter_info.device,
+            driver = %adapter_info.driver,
+            driver_info = %adapter_info.driver_info,
+            "selected wgpu adapter"
+        );
 
         let adapter_limits = adapter.limits();
         let (device, queue) = pollster::block_on(adapter.request_device(
@@ -250,6 +260,12 @@ impl WgpuRenderer {
         .context("failed to create wgpu device")?;
 
         let caps = surface.get_capabilities(&adapter);
+        info!(
+            formats = ?caps.formats,
+            present_modes = ?caps.present_modes,
+            alpha_modes = ?caps.alpha_modes,
+            "queried wgpu surface capabilities"
+        );
         let format = caps
             .formats
             .iter()
@@ -535,6 +551,55 @@ impl WgpuRenderer {
                 frame
             }
             Err(err) => {
+                let recoverable = matches!(err, wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost);
+                if recoverable {
+                    warn!(
+                        error = ?err,
+                        frame_seq = self.frame_seq,
+                        width = self.config.width,
+                        height = self.config.height,
+                        "surface acquire failed with recoverable error; reconfiguring"
+                    );
+                    self.surface.configure(&self.device, &self.config);
+                    info!(
+                        frame_seq = self.frame_seq,
+                        width = self.config.width,
+                        height = self.config.height,
+                        "reconfigured surface after recoverable acquire error"
+                    );
+
+                    match self.surface.get_current_texture() {
+                        Ok(frame) => {
+                            if self.acquire_fail_streak > 0 {
+                                info!(
+                                    recovered_after = self.acquire_fail_streak,
+                                    frame_seq = self.frame_seq,
+                                    "wgpu surface acquire recovered after reconfigure"
+                                );
+                            }
+                            self.acquire_fail_streak = 0;
+                            frame
+                        }
+                        Err(retry_err) => {
+                            self.acquire_fail_streak += 1;
+                            if self.acquire_fail_streak <= 5 || self.acquire_fail_streak % 120 == 0 {
+                                warn!(
+                                    error = ?retry_err,
+                                    streak = self.acquire_fail_streak,
+                                    frame_seq = self.frame_seq,
+                                    surface_width = self.config.width,
+                                    surface_height = self.config.height,
+                                    texture_width = self.texture_size.0,
+                                    texture_height = self.texture_size.1,
+                                    "surface acquire retry failed after reconfigure"
+                                );
+                            }
+                            return Err(anyhow!(
+                                "failed to acquire frame from wgpu surface after reconfigure: {retry_err:?}"
+                            ));
+                        }
+                    }
+                } else {
                 self.acquire_fail_streak += 1;
                 if self.acquire_fail_streak <= 5 || self.acquire_fail_streak % 120 == 0 {
                     warn!(
@@ -549,6 +614,7 @@ impl WgpuRenderer {
                     );
                 }
                 return Err(anyhow!("failed to acquire frame from wgpu surface: {err:?}"));
+                }
             }
         };
         let view = frame

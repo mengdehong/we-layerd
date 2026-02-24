@@ -199,6 +199,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
     let _ = event_queue.roundtrip(&mut state);
 
     let fps = run_cfg.fps_limit.max(1);
+    let frame_interval = Duration::from_secs_f64(1.0 / fps as f64);
     let fps_report_interval = Duration::from_secs(run_cfg.fps_report_interval_secs.max(1));
     let mut fps_window_start = Instant::now();
     let mut fps_frame_count: u64 = 0;
@@ -206,6 +207,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
     info!(outputs = state.outputs.len(), fps, "wayland multi-output loop started");
 
     while state.running {
+        let frame_start = Instant::now();
         let mut frame_cache: HashMap<u32, capture_xcomposite::CapturedFrame> = HashMap::new();
 
         if let Err(err) = event_queue.dispatch_pending(&mut state) {
@@ -311,6 +313,10 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
                 fps_window_start = Instant::now();
                 fps_frame_count = 0;
             }
+        }
+
+        if let Some(remaining) = frame_interval.checked_sub(frame_start.elapsed()) {
+            std::thread::sleep(remaining);
         }
     }
 
