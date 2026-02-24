@@ -6,11 +6,12 @@ refind_window_on_capture_error = true
 [wine]
 command = "wine"
 args = []
-wallpaper_exe = "~/.local/share/Steam/steamapps/common/wallpaper_engine/wallpaper64.exe"
+wallpaper_exe = "/home/aromatic/.local/share/Steam/steamapps/common/wallpaper_engine/wallpaper64.exe"
 
 [capture]
 wm_class_contains = "wallpaper"
-# title_contains = "wallpaper"
+# 如果 wine 参数含 -playInWindow，会自动从该参数推断标题关键字
+# title_contains = "Wallpaper Engine 1"
 # net_wm_pid = 12345
 # debug_save_frame_png = "/tmp/we-layerd-capture.png"
 

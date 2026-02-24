@@ -38,6 +38,7 @@ struct OutputSurface {
     surface: WlSurface,
     renderer: Option<WgpuRenderer>,
     capture_window: Option<u32>,
+    last_refind_attempt: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -193,12 +194,24 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
                         Err(err) => {
                             warn!(error = %err, output = %output.name, window, "capture failed for output");
                             if run_cfg.auto_refind_window {
+                                let now = Instant::now();
+                                let can_refind = output
+                                    .last_refind_attempt
+                                    .map(|t| now.duration_since(t) >= Duration::from_secs(2))
+                                    .unwrap_or(true);
+                                if !can_refind {
+                                    continue;
+                                }
+                                output.last_refind_attempt = Some(now);
+
                                 if let Ok(Some(found)) = window_finder::find_window_for_process(
                                     &run_cfg.capture_match,
                                     run_cfg.wine_pid,
                                 ) {
-                                    output.capture_window = Some(found.window);
-                                    info!(output = %output.name, window = found.window, "rebound output to rediscovered X11 window");
+                                    if output.capture_window != Some(found.window) {
+                                        output.capture_window = Some(found.window);
+                                        info!(output = %output.name, window = found.window, "rebound output to rediscovered X11 window");
+                                    }
                                 }
                             }
                         }
@@ -277,6 +290,7 @@ fn create_output_surface(
         surface,
         renderer,
         capture_window,
+        last_refind_attempt: None,
     });
 
     Ok(())

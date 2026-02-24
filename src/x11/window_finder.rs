@@ -5,7 +5,7 @@ use tracing::{info, warn};
 use x11rb::{
     connection::Connection,
     protocol::xproto::{
-        Atom, AtomEnum, ConnectionExt as _, GetPropertyReply, Window,
+        Atom, AtomEnum, ConnectionExt as _, GetPropertyReply, MapState, Window,
     },
     rust_connection::RustConnection,
 };
@@ -29,7 +29,20 @@ struct Atoms {
     utf8_string: Atom,
 }
 
-pub fn find_window_for_process(config: &CaptureConfig, fallback_pid: Option<u32>) -> Result<Option<WindowFinderResult>> {
+#[derive(Default, Debug)]
+struct WindowMetadata {
+    wm_class: String,
+    title: String,
+    pid: Option<u32>,
+    is_viewable: bool,
+    width: u16,
+    height: u16,
+}
+
+pub fn find_window_for_process(
+    config: &CaptureConfig,
+    fallback_pid: Option<u32>,
+) -> Result<Option<WindowFinderResult>> {
     let (conn, screen_num) = RustConnection::connect(None).context("failed to connect to X11 display")?;
     let root = conn.setup().roots[screen_num].root;
     let atoms = intern_atoms(&conn)?;
@@ -43,15 +56,39 @@ pub fn find_window_for_process(config: &CaptureConfig, fallback_pid: Option<u32>
         collect_windows(&conn, root, &mut windows)?;
         last_scan_count = windows.len();
 
+        let mut best: Option<(i64, Window, WindowMetadata)> = None;
+
         for window in windows {
             let meta = window_metadata(&conn, &atoms, window)?;
-            if is_match(config, target_pid, &meta) {
-                info!(window = window, ?target_pid, wm_class = %meta.wm_class, title = %meta.title, "matched X11 window");
-                return Ok(Some(WindowFinderResult {
-                    window,
-                    scanned_windows: last_scan_count,
-                }));
+            if !is_match(config, target_pid, &meta) {
+                continue;
             }
+            let score = score_window(target_pid, &meta);
+            if score < 0 {
+                continue;
+            }
+
+            let is_better = best.as_ref().map(|(s, _, _)| score > *s).unwrap_or(true);
+            if is_better {
+                best = Some((score, window, meta));
+            }
+        }
+
+        if let Some((score, window, meta)) = best {
+            info!(
+                window,
+                score,
+                ?target_pid,
+                wm_class = %meta.wm_class,
+                title = %meta.title,
+                width = meta.width,
+                height = meta.height,
+                "matched X11 window"
+            );
+            return Ok(Some(WindowFinderResult {
+                window,
+                scanned_windows: last_scan_count,
+            }));
         }
 
         std::thread::sleep(POLL_INTERVAL);
@@ -65,6 +102,32 @@ pub fn find_window_for_process(config: &CaptureConfig, fallback_pid: Option<u32>
         "failed to find matching X11 window within timeout"
     );
     Ok(None)
+}
+
+fn score_window(target_pid: Option<u32>, meta: &WindowMetadata) -> i64 {
+    if !meta.is_viewable {
+        return -1;
+    }
+
+    if meta.width < 64 || meta.height < 64 {
+        return -1;
+    }
+
+    let mut score: i64 = 0;
+    if target_pid.is_some() && meta.pid == target_pid {
+        score += 200;
+    }
+
+    if !meta.title.is_empty() {
+        score += 80;
+    }
+
+    if contains_case_insensitive(&meta.wm_class, "wallpaper") {
+        score += 40;
+    }
+
+    score += (meta.width as i64 * meta.height as i64 / 10000).min(120);
+    score
 }
 
 fn intern_atoms(conn: &RustConnection) -> Result<Atoms> {
@@ -98,21 +161,33 @@ fn collect_windows(conn: &RustConnection, root: Window, out: &mut Vec<Window>) -
     Ok(())
 }
 
-#[derive(Default)]
-struct WindowMetadata {
-    wm_class: String,
-    title: String,
-    pid: Option<u32>,
-}
-
 fn window_metadata(conn: &RustConnection, atoms: &Atoms, window: Window) -> Result<WindowMetadata> {
+    let attrs = conn
+        .get_window_attributes(window)
+        .with_context(|| format!("get_window_attributes failed for window {}", window))?
+        .reply()
+        .context("get_window_attributes reply failed")?;
+
+    let geom = conn
+        .get_geometry(window)
+        .with_context(|| format!("get_geometry failed for window {}", window))?
+        .reply()
+        .context("get_geometry reply failed")?;
+
     Ok(WindowMetadata {
         wm_class: read_text_property(conn, window, atoms.wm_class, AtomEnum::STRING.into())?
             .unwrap_or_default(),
         title: read_text_property(conn, window, atoms.net_wm_name, atoms.utf8_string)?
-            .or_else(|| read_text_property(conn, window, AtomEnum::WM_NAME.into(), AtomEnum::STRING.into()).ok().flatten())
+            .or_else(|| {
+                read_text_property(conn, window, AtomEnum::WM_NAME.into(), AtomEnum::STRING.into())
+                    .ok()
+                    .flatten()
+            })
             .unwrap_or_default(),
         pid: read_pid_property(conn, window, atoms.net_wm_pid).ok().flatten(),
+        is_viewable: attrs.map_state == MapState::VIEWABLE,
+        width: geom.width,
+        height: geom.height,
     })
 }
 
@@ -121,13 +196,17 @@ fn is_match(config: &CaptureConfig, target_pid: Option<u32>, meta: &WindowMetada
     let class_ok = config
         .wm_class_contains
         .as_ref()
-        .map_or(true, |needle| meta.wm_class.to_lowercase().contains(&needle.to_lowercase()));
+        .map_or(true, |needle| contains_case_insensitive(&meta.wm_class, needle));
     let title_ok = config
         .title_contains
         .as_ref()
-        .map_or(true, |needle| meta.title.to_lowercase().contains(&needle.to_lowercase()));
+        .map_or(true, |needle| contains_case_insensitive(&meta.title, needle));
 
     pid_ok && class_ok && title_ok
+}
+
+fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
+    haystack.to_lowercase().contains(&needle.to_lowercase())
 }
 
 fn read_text_property(

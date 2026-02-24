@@ -12,14 +12,21 @@ use crate::{
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
-    info!(?cfg, "starting we-layerd run mode");
+    let mut capture_match = cfg.capture.clone();
+    if capture_match.title_contains.is_none() {
+        if let Some(title_hint) = extract_play_in_window_hint(&cfg.wine.args) {
+            info!(title = %title_hint, "auto-derived capture.title_contains from wine args");
+            capture_match.title_contains = Some(title_hint);
+        }
+    }
+    info!(?cfg, ?capture_match, "starting we-layerd run mode");
     let wine = WineProcessHandle::spawn(&cfg.wine)?;
     wine.install_ctrlc_handler()?;
     wine.install_exit_monitor(cfg.wine.clone(), cfg.general.restart_wine_on_exit);
     let wine_pid = wine.pid();
     info!(pid = wine_pid, "wine launcher enabled");
 
-    let capture_window = match window_finder::find_window_for_process(&cfg.capture, wine_pid)? {
+    let capture_window = match window_finder::find_window_for_process(&capture_match, wine_pid)? {
         Some(found) => {
             info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
             if let Some(path) = cfg.capture.debug_save_frame_png.as_deref() {
@@ -40,7 +47,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         output_window_map: cfg.capture.output_window_map.clone(),
         fps_limit: cfg.general.fps_limit,
         auto_refind_window: cfg.general.refind_window_on_capture_error,
-        capture_match: cfg.capture.clone(),
+        capture_match,
         wine_pid,
     })
 }
@@ -65,4 +72,9 @@ pub fn doctor() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn extract_play_in_window_hint(args: &[String]) -> Option<String> {
+    let idx = args.iter().position(|arg| arg == "-playInWindow")?;
+    args.get(idx + 1).cloned().filter(|s| !s.trim().is_empty())
 }
