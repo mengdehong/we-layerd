@@ -182,6 +182,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
     let fps_report_interval = Duration::from_secs(run_cfg.fps_report_interval_secs.max(1));
     let mut fps_window_start = Instant::now();
     let mut fps_frame_count: u64 = 0;
+    let mut measured_fps = fps as f32;
     info!(outputs = state.outputs.len(), fps, "wayland multi-output loop started");
 
     while state.running {
@@ -194,6 +195,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
 
         for output in &mut state.outputs {
             if let Some(renderer) = &mut output.renderer {
+                renderer.set_fps_overlay(measured_fps, run_cfg.show_fps);
                 if let Some(window) = output.capture_window {
                     if !frame_cache.contains_key(&window) {
                         if output.capturer.is_none() {
@@ -263,6 +265,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
             let elapsed = fps_window_start.elapsed();
             if elapsed >= fps_report_interval {
                 let measured = fps_frame_count as f64 / elapsed.as_secs_f64();
+                measured_fps = measured as f32;
                 info!(
                     measured_fps = format_args!("{measured:.1}"),
                     sample_window_ms = elapsed.as_millis(),

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use bytemuck::{Pod, Zeroable};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
 use wayland_client::{protocol::wl_surface::WlSurface, Connection, Proxy};
 
@@ -12,6 +13,8 @@ struct VsOut {
 var tex: texture_2d<f32>;
 @group(0) @binding(1)
 var tex_sampler: sampler;
+@group(0) @binding(2)
+var<uniform> overlay: vec4<f32>; // x=width, y=height, z=fps, w=show(0/1)
 
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
@@ -34,9 +37,96 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
 
 @fragment
 fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(tex, tex_sampler, inf.uv);
+    var color = textureSample(tex, tex_sampler, inf.uv);
+    if (overlay.w < 0.5) {
+        return color;
+    }
+
+    let p = inf.pos.xy;
+    let digit_w = 16.0;
+    let digit_h = 28.0;
+    let thickness = 3.0;
+    let gap = 4.0;
+    let margin = 16.0;
+    let total_w = digit_w * 3.0 + gap * 2.0;
+    let origin = vec2<f32>(overlay.x - margin - total_w, overlay.y - margin - digit_h);
+
+    let fps_i = i32(clamp(round(overlay.z), 0.0, 999.0));
+    let d0 = fps_i / 100;
+    let d1 = (fps_i / 10) % 10;
+    let d2 = fps_i % 10;
+    let show_hundreds = fps_i >= 100;
+
+    let bg_min = origin - vec2<f32>(8.0, 8.0);
+    let bg_max = vec2<f32>(overlay.x - margin + 8.0, overlay.y - margin + 8.0);
+    let in_bg = p.x >= bg_min.x && p.x <= bg_max.x && p.y >= bg_min.y && p.y <= bg_max.y;
+    if (in_bg) {
+        color = color * vec4<f32>(0.6, 0.6, 0.6, 1.0);
+    }
+
+    var lit = false;
+    if (show_hundreds) {
+        lit = lit || draw_digit(p, origin, d0, digit_w, digit_h, thickness);
+    }
+    lit = lit || draw_digit(p, origin + vec2<f32>(digit_w + gap, 0.0), d1, digit_w, digit_h, thickness);
+    lit = lit || draw_digit(p, origin + vec2<f32>((digit_w + gap) * 2.0, 0.0), d2, digit_w, digit_h, thickness);
+
+    if (lit) {
+        return vec4<f32>(0.98, 0.95, 0.20, 1.0);
+    }
+
+    return color;
+}
+
+fn in_rect(p: vec2<f32>, minp: vec2<f32>, maxp: vec2<f32>) -> bool {
+    return p.x >= minp.x && p.x <= maxp.x && p.y >= minp.y && p.y <= maxp.y;
+}
+
+fn seg_on(d: i32, s: i32) -> bool {
+    switch d {
+        case 0: { return s != 6; }
+        case 1: { return s == 1 || s == 2; }
+        case 2: { return s == 0 || s == 1 || s == 6 || s == 4 || s == 3; }
+        case 3: { return s == 0 || s == 1 || s == 6 || s == 2 || s == 3; }
+        case 4: { return s == 5 || s == 6 || s == 1 || s == 2; }
+        case 5: { return s == 0 || s == 5 || s == 6 || s == 2 || s == 3; }
+        case 6: { return s == 0 || s == 5 || s == 6 || s == 2 || s == 3 || s == 4; }
+        case 7: { return s == 0 || s == 1 || s == 2; }
+        case 8: { return true; }
+        case 9: { return s != 4; }
+        default: { return false; }
+    }
+}
+
+fn draw_digit(p: vec2<f32>, origin: vec2<f32>, w: i32, digit_w: f32, digit_h: f32, t: f32) -> bool {
+    let x0 = origin.x;
+    let y0 = origin.y;
+    let x1 = x0 + digit_w;
+    let y1 = y0 + digit_h;
+    let ym = y0 + digit_h * 0.5;
+    let inner_l = x0 + t;
+    let inner_r = x1 - t;
+
+    var lit = false;
+    if (seg_on(w, 0) && in_rect(p, vec2<f32>(inner_l, y0), vec2<f32>(inner_r, y0 + t))) { lit = true; } // top
+    if (seg_on(w, 1) && in_rect(p, vec2<f32>(x1 - t, y0 + t), vec2<f32>(x1, ym - t * 0.5))) { lit = true; } // upper right
+    if (seg_on(w, 2) && in_rect(p, vec2<f32>(x1 - t, ym + t * 0.5), vec2<f32>(x1, y1 - t))) { lit = true; } // lower right
+    if (seg_on(w, 3) && in_rect(p, vec2<f32>(inner_l, y1 - t), vec2<f32>(inner_r, y1))) { lit = true; } // bottom
+    if (seg_on(w, 4) && in_rect(p, vec2<f32>(x0, ym + t * 0.5), vec2<f32>(x0 + t, y1 - t))) { lit = true; } // lower left
+    if (seg_on(w, 5) && in_rect(p, vec2<f32>(x0, y0 + t), vec2<f32>(x0 + t, ym - t * 0.5))) { lit = true; } // upper left
+    if (seg_on(w, 6) && in_rect(p, vec2<f32>(inner_l, ym - t * 0.5), vec2<f32>(inner_r, ym + t * 0.5))) { lit = true; } // middle
+    return lit;
 }
 "#;
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct OverlayUniform {
+    width: f32,
+    height: f32,
+    fps: f32,
+    show: f32,
+}
 
 pub struct WgpuRenderer {
     surface: wgpu::Surface<'static>,
@@ -46,6 +136,8 @@ pub struct WgpuRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
+    overlay_buffer: wgpu::Buffer,
+    overlay: OverlayUniform,
     texture: wgpu::Texture,
     texture_size: (u32, u32),
     max_texture_dimension_2d: u32,
@@ -137,6 +229,16 @@ impl WgpuRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -176,7 +278,21 @@ impl WgpuRenderer {
             multiview: None,
         });
 
-        let (texture, bind_group) = create_texture_resources(&device, &queue, &bind_group_layout, 2, 2, &[
+        let overlay = OverlayUniform {
+            width: width.max(1) as f32,
+            height: height.max(1) as f32,
+            fps: 0.0,
+            show: 0.0,
+        };
+        let overlay_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("we-layerd-overlay-uniform"),
+            size: std::mem::size_of::<OverlayUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&overlay_buffer, 0, bytemuck::bytes_of(&overlay));
+
+        let (texture, bind_group) = create_texture_resources(&device, &queue, &bind_group_layout, &overlay_buffer, 2, 2, &[
             40, 40, 40, 255, 80, 80, 80, 255,
             80, 80, 80, 255, 40, 40, 40, 255,
         ]);
@@ -189,6 +305,8 @@ impl WgpuRenderer {
             pipeline,
             bind_group_layout,
             bind_group,
+            overlay_buffer,
+            overlay,
             texture,
             texture_size: (2, 2),
             max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
@@ -199,6 +317,17 @@ impl WgpuRenderer {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
+        self.overlay.width = self.config.width as f32;
+        self.overlay.height = self.config.height as f32;
+        self.queue
+            .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
+    }
+
+    pub fn set_fps_overlay(&mut self, fps: f32, show: bool) {
+        self.overlay.fps = fps.max(0.0);
+        self.overlay.show = if show { 1.0 } else { 0.0 };
+        self.queue
+            .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
     }
 
     pub fn upload_bgra(&mut self, width: u32, height: u32, bgra: &[u8]) -> Result<()> {
@@ -223,7 +352,15 @@ impl WgpuRenderer {
 
         if self.texture_size != (width, height) {
             let (texture, bind_group) =
-                create_texture_resources(&self.device, &self.queue, &self.bind_group_layout, width, height, bgra);
+                create_texture_resources(
+                    &self.device,
+                    &self.queue,
+                    &self.bind_group_layout,
+                    &self.overlay_buffer,
+                    width,
+                    height,
+                    bgra,
+                );
             self.texture = texture;
             self.bind_group = bind_group;
             self.texture_size = (width, height);
@@ -298,6 +435,7 @@ fn create_texture_resources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     bind_group_layout: &wgpu::BindGroupLayout,
+    overlay_buffer: &wgpu::Buffer,
     width: u32,
     height: u32,
     bgra: &[u8],
@@ -357,6 +495,10 @@ fn create_texture_resources(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: overlay_buffer.as_entire_binding(),
             },
         ],
     });
