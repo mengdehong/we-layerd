@@ -37,6 +37,8 @@ pub struct CaptureConfig {
     pub title_contains: Option<String>,
     #[serde(default)]
     pub net_wm_pid: Option<u32>,
+    #[serde(default)]
+    pub debug_save_frame_png: Option<String>,
 }
 
 fn default_fps() -> u32 {
@@ -81,6 +83,7 @@ impl Default for CaptureConfig {
             wm_class_contains: Some("wallpaper".to_string()),
             title_contains: None,
             net_wm_pid: None,
+            debug_save_frame_png: None,
         }
     }
 }

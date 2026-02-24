@@ -3,7 +3,12 @@ use std::path::Path;
 use anyhow::Result;
 use tracing::{info, warn};
 
-use crate::{config::Config, wayland, wine::launcher::WineProcessHandle, x11::window_finder};
+use crate::{
+    config::Config,
+    wayland,
+    wine::launcher::WineProcessHandle,
+    x11::{capture_xcomposite, window_finder},
+};
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
@@ -14,7 +19,14 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     info!(pid = wine_pid, "wine launcher enabled");
 
     match window_finder::find_window_for_process(&cfg.capture, wine_pid)? {
-        Some(found) => info!(window = found.window, scanned = found.scanned_windows, "using X11 window"),
+        Some(found) => {
+            info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
+            if let Some(path) = cfg.capture.debug_save_frame_png.as_deref() {
+                let frame = capture_xcomposite::capture_single_frame(found.window)?;
+                capture_xcomposite::save_frame_png(&frame, Path::new(path))?;
+                info!(path, "saved debug XComposite frame");
+            }
+        }
         None => warn!("no X11 window found yet, continuing with Wayland layer loop"),
     }
 
