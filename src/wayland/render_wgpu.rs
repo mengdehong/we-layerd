@@ -118,19 +118,15 @@ fn in_rect(p: vec2<f32>, minp: vec2<f32>, maxp: vec2<f32>) -> bool {
 }
 
 fn seg_on(d: i32, s: i32) -> bool {
-    switch d {
-        case 0: { return s != 6; }
-        case 1: { return s == 1 || s == 2; }
-        case 2: { return s == 0 || s == 1 || s == 6 || s == 4 || s == 3; }
-        case 3: { return s == 0 || s == 1 || s == 6 || s == 2 || s == 3; }
-        case 4: { return s == 5 || s == 6 || s == 1 || s == 2; }
-        case 5: { return s == 0 || s == 5 || s == 6 || s == 2 || s == 3; }
-        case 6: { return s == 0 || s == 5 || s == 6 || s == 2 || s == 3 || s == 4; }
-        case 7: { return s == 0 || s == 1 || s == 2; }
-        case 8: { return true; }
-        case 9: { return s != 4; }
-        default: { return false; }
+    if (d < 0 || d > 9 || s < 0 || s > 6) {
+        return false;
     }
+    let masks = array<u32, 10>(
+        0x3Fu, 0x06u, 0x5Bu, 0x4Fu, 0x66u,
+        0x6Du, 0x7Du, 0x07u, 0x7Fu, 0x6Fu
+    );
+    let mask = masks[u32(d)];
+    return ((mask >> u32(s)) & 1u) == 1u;
 }
 
 fn draw_digit(p: vec2<f32>, origin: vec2<f32>, w: i32, digit_w: f32, digit_h: f32, t: f32) -> bool {
@@ -177,6 +173,7 @@ pub struct WgpuRenderer {
     bind_group: wgpu::BindGroup,
     overlay_buffer: wgpu::Buffer,
     overlay: OverlayUniform,
+    overlay_dirty: bool,
     texture: wgpu::Texture,
     texture_size: (u32, u32),
     max_texture_dimension_2d: u32,
@@ -350,6 +347,7 @@ impl WgpuRenderer {
             bind_group,
             overlay_buffer,
             overlay,
+            overlay_dirty: false,
             texture,
             texture_size: (2, 2),
             max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
@@ -357,27 +355,38 @@ impl WgpuRenderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.config.width = width.max(1);
-        self.config.height = height.max(1);
+        let next_width = width.max(1);
+        let next_height = height.max(1);
+        if self.config.width == next_width && self.config.height == next_height {
+            return;
+        }
+        self.config.width = next_width;
+        self.config.height = next_height;
         self.surface.configure(&self.device, &self.config);
         self.overlay.surface_width = self.config.width as f32;
         self.overlay.surface_height = self.config.height as f32;
-        self.queue
-            .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
+        self.overlay_dirty = true;
     }
 
     pub fn set_fps_overlay(&mut self, fps: f32, show: bool) {
-        self.overlay.fps = fps.max(0.0);
-        self.overlay.show = if show { 1.0 } else { 0.0 };
-        self.queue
-            .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
+        let next_fps = fps.max(0.0).round();
+        let next_show = if show { 1.0 } else { 0.0 };
+        if self.overlay.fps == next_fps && self.overlay.show == next_show {
+            return;
+        }
+        self.overlay.fps = next_fps;
+        self.overlay.show = next_show;
+        self.overlay_dirty = true;
     }
 
     pub fn upload_bgra(&mut self, width: u32, height: u32, stride: u32, bgra: &[u8]) -> Result<()> {
-        self.overlay.source_width = width.max(1) as f32;
-        self.overlay.source_height = height.max(1) as f32;
-        self.queue
-            .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
+        let next_src_width = width.max(1) as f32;
+        let next_src_height = height.max(1) as f32;
+        if self.overlay.source_width != next_src_width || self.overlay.source_height != next_src_height {
+            self.overlay.source_width = next_src_width;
+            self.overlay.source_height = next_src_height;
+            self.overlay_dirty = true;
+        }
 
         if width > self.max_texture_dimension_2d || height > self.max_texture_dimension_2d {
             return Err(anyhow!(
@@ -453,6 +462,8 @@ impl WgpuRenderer {
     }
 
     pub fn render(&mut self) -> Result<()> {
+        self.flush_overlay_if_dirty();
+
         let frame = self
             .surface
             .get_current_texture()
@@ -490,6 +501,15 @@ impl WgpuRenderer {
         self.queue.submit(Some(encoder.finish()));
         frame.present();
         Ok(())
+    }
+
+    fn flush_overlay_if_dirty(&mut self) {
+        if !self.overlay_dirty {
+            return;
+        }
+        self.queue
+            .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
+        self.overlay_dirty = false;
     }
 }
 

@@ -7,7 +7,8 @@ use x11rb::{
     protocol::{
         composite::{self, ConnectionExt as _},
         shm::{self, ConnectionExt as _},
-        xproto::{ConnectionExt as _, ImageFormat, Pixmap, Window},
+        xproto::{ChangeWindowAttributesAux, ConnectionExt as _, EventMask, ImageFormat, Pixmap, Window},
+        Event,
     },
     rust_connection::RustConnection,
 };
@@ -24,6 +25,7 @@ pub struct XCompositeCapturer {
     conn: RustConnection,
     window: Window,
     shm: Option<ShmSegment>,
+    cached_geometry: Option<CachedGeometry>,
     shm_enabled: bool,
     shm_warned: bool,
 }
@@ -32,6 +34,13 @@ struct ShmSegment {
     seg: shm::Seg,
     addr: *mut u8,
     len: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CachedGeometry {
+    width: u16,
+    height: u16,
+    depth: u8,
 }
 
 impl XCompositeCapturer {
@@ -47,6 +56,11 @@ impl XCompositeCapturer {
             .composite_redirect_window(window, composite::Redirect::AUTOMATIC)
             .context("failed to redirect window for XComposite")?;
 
+        let _ = conn.change_window_attributes(
+            window,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY),
+        );
+
         conn.flush().context("failed to flush X11 requests")?;
 
         let shm_enabled = conn.shm_query_version().ok().and_then(|c| c.reply().ok()).is_some();
@@ -55,12 +69,15 @@ impl XCompositeCapturer {
             conn,
             window,
             shm: None,
+            cached_geometry: None,
             shm_enabled,
             shm_warned: false,
         })
     }
 
     pub fn capture_frame(&mut self) -> Result<CapturedFrame> {
+        self.update_cached_geometry_from_events();
+
         let pixmap = self
             .conn
             .generate_id()
@@ -68,9 +85,12 @@ impl XCompositeCapturer {
         self.conn
             .composite_name_window_pixmap(self.window, pixmap)
             .context("failed to name XComposite window pixmap")?;
+        let geometry = self
+            .query_pixmap_geometry(pixmap)
+            .context("failed to query pixmap geometry")?;
 
         let frame = if self.shm_enabled {
-            match self.capture_pixmap_bgra_shm(pixmap) {
+            match self.capture_pixmap_bgra_shm(pixmap, geometry) {
                 Ok(frame) => Ok(frame),
                 Err(err) => {
                     if !self.shm_warned {
@@ -79,11 +99,11 @@ impl XCompositeCapturer {
                     }
                     self.shm_enabled = false;
                     self.release_shm();
-                    capture_pixmap_bgra(&self.conn, pixmap)
+                    capture_pixmap_bgra(&self.conn, pixmap, geometry)
                 }
             }
         } else {
-            capture_pixmap_bgra(&self.conn, pixmap)
+            capture_pixmap_bgra(&self.conn, pixmap, geometry)
         }
             .with_context(|| format!("failed to capture pixmap for window {}", self.window))
             ?;
@@ -93,14 +113,11 @@ impl XCompositeCapturer {
         Ok(frame)
     }
 
-    fn capture_pixmap_bgra_shm(&mut self, pixmap: Pixmap) -> Result<CapturedFrame> {
-        let geometry = self
-            .conn
-            .get_geometry(pixmap)
-            .context("get_geometry failed")?
-            .reply()
-            .context("get_geometry reply failed")?;
-
+    fn capture_pixmap_bgra_shm(
+        &mut self,
+        pixmap: Pixmap,
+        geometry: CachedGeometry,
+    ) -> Result<CapturedFrame> {
         let width = u16::max(geometry.width, 1);
         let height = u16::max(geometry.height, 1);
         if geometry.depth < 24 {
@@ -163,6 +180,44 @@ impl XCompositeCapturer {
             stride: packed_stride as u32,
             bgra,
         })
+    }
+
+    fn query_pixmap_geometry(&mut self, pixmap: Pixmap) -> Result<CachedGeometry> {
+        if let Some(geometry) = self.cached_geometry {
+            return Ok(geometry);
+        }
+
+        let geometry = self
+            .conn
+            .get_geometry(pixmap)
+            .context("get_geometry failed")?
+            .reply()
+            .context("get_geometry reply failed")?;
+
+        let cached = CachedGeometry {
+            width: u16::max(geometry.width, 1),
+            height: u16::max(geometry.height, 1),
+            depth: geometry.depth,
+        };
+        self.cached_geometry = Some(cached);
+        Ok(cached)
+    }
+
+    fn update_cached_geometry_from_events(&mut self) {
+        loop {
+            match self.conn.poll_for_event() {
+                Ok(Some(Event::ConfigureNotify(event))) if event.window == self.window => {
+                    if let Some(geometry) = self.cached_geometry.as_mut() {
+                        geometry.width = u16::max(event.width, 1);
+                        geometry.height = u16::max(event.height, 1);
+                    } else {
+                        self.cached_geometry = None;
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
     }
 
     fn ensure_shm_capacity(&mut self, required_len: usize) -> Result<()> {
@@ -241,13 +296,11 @@ pub fn probe_xcomposite_support() -> Result<()> {
     Ok(())
 }
 
-fn capture_pixmap_bgra(conn: &RustConnection, pixmap: Pixmap) -> Result<CapturedFrame> {
-    let geometry = conn
-        .get_geometry(pixmap)
-        .context("get_geometry failed")?
-        .reply()
-        .context("get_geometry reply failed")?;
-
+fn capture_pixmap_bgra(
+    conn: &RustConnection,
+    pixmap: Pixmap,
+    geometry: CachedGeometry,
+) -> Result<CapturedFrame> {
     let width = u16::max(geometry.width, 1);
     let height = u16::max(geometry.height, 1);
 
