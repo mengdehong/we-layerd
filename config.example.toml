@@ -1,0 +1,12 @@
+[general]
+fps_limit = 30
+
+[wine]
+command = "wine"
+args = []
+wallpaper_exe = "/path/to/wallpaper64.exe"
+
+[capture]
+wm_class_contains = "wallpaper"
+# title_contains = "wallpaper"
+# net_wm_pid = 12345
