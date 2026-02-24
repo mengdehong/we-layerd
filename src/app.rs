@@ -3,13 +3,12 @@ use std::path::Path;
 use anyhow::Result;
 use tracing::{info, warn};
 
-use crate::config::Config;
+use crate::{config::Config, wayland};
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
     info!(?cfg, "starting we-layerd run mode");
-    warn!("runtime loop not implemented yet");
-    Ok(())
+    wayland::layer_shell::run_single_background_surface()
 }
 
 pub fn doctor() {

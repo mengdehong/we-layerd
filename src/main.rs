@@ -2,8 +2,7 @@ mod app;
 mod cli;
 mod config;
 mod logging;
-
-use std::path::Path;
+mod wayland;
 
 use anyhow::Result;
 use clap::Parser;
@@ -20,7 +19,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::PrintConfig { config } => {
-            let cfg = config::Config::load(config.as_deref().map(Path::new))?;
+            let cfg = config::Config::load(config.as_deref())?;
             println!("{}", cfg.to_toml_pretty()?);
             Ok(())
         }
