@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod logging;
 mod wayland;
+mod wine;
 
 use anyhow::Result;
 use clap::Parser;

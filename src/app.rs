@@ -3,11 +3,14 @@ use std::path::Path;
 use anyhow::Result;
 use tracing::{info, warn};
 
-use crate::{config::Config, wayland};
+use crate::{config::Config, wayland, wine::launcher::WineProcessHandle};
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
     info!(?cfg, "starting we-layerd run mode");
+    let _wine = WineProcessHandle::spawn(&cfg.wine)?;
+    _wine.install_ctrlc_handler()?;
+    info!(pid = _wine.pid(), "wine launcher enabled");
     wayland::layer_shell::run_single_background_surface()
 }
 
