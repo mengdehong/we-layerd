@@ -3,6 +3,8 @@ use bytemuck::{Pod, Zeroable};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
 use wayland_client::{protocol::wl_surface::WlSurface, Connection, Proxy};
 
+use crate::config::ScaleMode;
+
 const SHADER: &str = r#"
 struct OverlayUniform {
     surface_width: f32,
@@ -11,7 +13,7 @@ struct OverlayUniform {
     show: f32,
     source_width: f32,
     source_height: f32,
-    _pad0: f32,
+    scale_mode: f32,
     _pad1: f32,
 };
 
@@ -57,16 +59,30 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
 
     var sample_uv = inf.uv;
     var inside = true;
-    if (src_aspect > dst_aspect) {
-        let visible_h = dst_aspect / src_aspect;
-        let y = (sample_uv.y - (1.0 - visible_h) * 0.5) / visible_h;
-        inside = y >= 0.0 && y <= 1.0;
-        sample_uv.y = y;
-    } else if (src_aspect < dst_aspect) {
-        let visible_w = src_aspect / dst_aspect;
-        let x = (sample_uv.x - (1.0 - visible_w) * 0.5) / visible_w;
-        inside = x >= 0.0 && x <= 1.0;
-        sample_uv.x = x;
+    if (overlay.scale_mode < 0.5) {
+        // fit: preserve aspect with black bars
+        if (src_aspect > dst_aspect) {
+            let visible_h = dst_aspect / src_aspect;
+            let y = (sample_uv.y - (1.0 - visible_h) * 0.5) / visible_h;
+            inside = y >= 0.0 && y <= 1.0;
+            sample_uv.y = y;
+        } else if (src_aspect < dst_aspect) {
+            let visible_w = src_aspect / dst_aspect;
+            let x = (sample_uv.x - (1.0 - visible_w) * 0.5) / visible_w;
+            inside = x >= 0.0 && x <= 1.0;
+            sample_uv.x = x;
+        }
+    } else if (overlay.scale_mode < 1.5) {
+        // cover: fill screen and crop overflow
+        if (src_aspect > dst_aspect) {
+            let visible_w = dst_aspect / src_aspect;
+            sample_uv.x = (sample_uv.x - 0.5) * visible_w + 0.5;
+        } else if (src_aspect < dst_aspect) {
+            let visible_h = src_aspect / dst_aspect;
+            sample_uv.y = (sample_uv.y - 0.5) * visible_h + 0.5;
+        }
+    } else {
+        // stretch: fill without preserving aspect
     }
 
     var color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
@@ -168,7 +184,7 @@ struct OverlayUniform {
     show: f32,
     source_width: f32,
     source_height: f32,
-    pad0: f32,
+    scale_mode: f32,
     pad1: f32,
 }
 
@@ -330,7 +346,7 @@ impl WgpuRenderer {
             show: 0.0,
             source_width: 1.0,
             source_height: 1.0,
-            pad0: 0.0,
+            scale_mode: scale_mode_to_f32(ScaleMode::Cover),
             pad1: 0.0,
         };
         let overlay_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -385,6 +401,15 @@ impl WgpuRenderer {
         }
         self.overlay.fps = next_fps;
         self.overlay.show = next_show;
+        self.overlay_dirty = true;
+    }
+
+    pub fn set_scale_mode(&mut self, mode: ScaleMode) {
+        let next = scale_mode_to_f32(mode);
+        if self.overlay.scale_mode == next {
+            return;
+        }
+        self.overlay.scale_mode = next;
         self.overlay_dirty = true;
     }
 
@@ -519,6 +544,14 @@ impl WgpuRenderer {
         self.queue
             .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
         self.overlay_dirty = false;
+    }
+}
+
+fn scale_mode_to_f32(mode: ScaleMode) -> f32 {
+    match mode {
+        ScaleMode::Fit => 0.0,
+        ScaleMode::Cover => 1.0,
+        ScaleMode::Stretch => 2.0,
     }
 }
 

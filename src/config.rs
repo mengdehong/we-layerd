@@ -25,6 +25,22 @@ pub struct GeneralConfig {
     pub show_fps: bool,
     #[serde(default = "default_fps_report_interval_secs")]
     pub fps_report_interval_secs: u64,
+    #[serde(default)]
+    pub scale_mode: ScaleMode,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScaleMode {
+    Fit,
+    Cover,
+    Stretch,
+}
+
+impl Default for ScaleMode {
+    fn default() -> Self {
+        Self::Cover
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +105,7 @@ impl Default for GeneralConfig {
             refind_window_on_capture_error: default_refind_window(),
             show_fps: false,
             fps_report_interval_secs: default_fps_report_interval_secs(),
+            scale_mode: ScaleMode::default(),
         }
     }
 }

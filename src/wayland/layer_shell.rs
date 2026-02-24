@@ -21,7 +21,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use crate::{
-    config::CaptureConfig,
+    config::{CaptureConfig, ScaleMode},
     wayland::{outputs, render_wgpu::WgpuRenderer},
     x11::{capture_xcomposite, window_finder},
 };
@@ -33,6 +33,7 @@ pub struct LayerRunConfig {
     pub fps_limit: u32,
     pub show_fps: bool,
     pub fps_report_interval_secs: u64,
+    pub scale_mode: ScaleMode,
     pub auto_refind_window: bool,
     pub capture_match: CaptureConfig,
     pub wine_pid: Option<u32>,
@@ -193,6 +194,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
 
         for output in &mut state.outputs {
             if let Some(renderer) = &mut output.renderer {
+                renderer.set_scale_mode(run_cfg.scale_mode);
                 renderer.set_fps_overlay(measured_fps, run_cfg.show_fps);
                 if let Some(window) = output.capture_window {
                     if !frame_cache.contains_key(&window) {

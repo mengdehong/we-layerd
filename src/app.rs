@@ -48,6 +48,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         fps_limit: cfg.general.fps_limit,
         show_fps: cfg.general.show_fps,
         fps_report_interval_secs: cfg.general.fps_report_interval_secs,
+        scale_mode: cfg.general.scale_mode,
         auto_refind_window: cfg.general.refind_window_on_capture_error,
         capture_match,
         wine_pid,

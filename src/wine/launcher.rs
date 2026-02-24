@@ -1,4 +1,6 @@
 use std::{
+    io,
+    os::unix::process::CommandExt,
     path::Path,
     process::{Child, Command, Stdio},
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
@@ -100,7 +102,7 @@ impl WineProcessHandle {
             .map_err(|_| anyhow!("wine child process lock poisoned"))?;
 
         if let Some(child) = guard.as_mut() {
-            child.kill().context("failed to send kill to wine process")?;
+            terminate_process_group(child)?;
             let _ = child.wait();
             info!("wine process terminated");
         }
@@ -143,6 +145,15 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+
     cmd.spawn().with_context(|| {
         format!(
             "failed to spawn wine command '{}' for {}",
@@ -150,4 +161,36 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
             config.wallpaper_exe
         )
     })
+}
+
+fn terminate_process_group(child: &mut Child) -> Result<()> {
+    let pid = child.id() as i32;
+    let pgid = -pid;
+
+    if !signal_process_group(pgid, libc::SIGTERM)? {
+        return Ok(());
+    }
+
+    for _ in 0..20 {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(err) => return Err(err).context("failed to wait for wine process after SIGTERM"),
+        }
+    }
+
+    signal_process_group(pgid, libc::SIGKILL)?;
+    Ok(())
+}
+
+fn signal_process_group(pgid: i32, signal: i32) -> Result<bool> {
+    let rc = unsafe { libc::kill(pgid, signal) };
+    if rc == 0 {
+        return Ok(true);
+    }
+    let err = io::Error::last_os_error();
+    if err.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(false);
+    }
+    Err(err).with_context(|| format!("failed to send signal {} to process group {}", signal, pgid))
 }
