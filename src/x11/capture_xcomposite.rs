@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{os::fd::AsRawFd, path::Path, ptr::null_mut};
 
 use anyhow::{anyhow, Context, Result};
 use image::{ImageBuffer, RgbaImage};
@@ -6,6 +6,7 @@ use x11rb::{
     connection::Connection,
     protocol::{
         composite::{self, ConnectionExt as _},
+        shm::{self, ConnectionExt as _},
         xproto::{ConnectionExt as _, ImageFormat, Pixmap, Window},
     },
     rust_connection::RustConnection,
@@ -21,6 +22,15 @@ pub struct CapturedFrame {
 pub struct XCompositeCapturer {
     conn: RustConnection,
     window: Window,
+    shm: Option<ShmSegment>,
+    shm_enabled: bool,
+    shm_warned: bool,
+}
+
+struct ShmSegment {
+    seg: shm::Seg,
+    addr: *mut u8,
+    len: usize,
 }
 
 impl XCompositeCapturer {
@@ -38,7 +48,15 @@ impl XCompositeCapturer {
 
         conn.flush().context("failed to flush X11 requests")?;
 
-        Ok(Self { conn, window })
+        let shm_enabled = conn.shm_query_version().ok().and_then(|c| c.reply().ok()).is_some();
+
+        Ok(Self {
+            conn,
+            window,
+            shm: None,
+            shm_enabled,
+            shm_warned: false,
+        })
     }
 
     pub fn capture_frame(&mut self) -> Result<CapturedFrame> {
@@ -50,7 +68,22 @@ impl XCompositeCapturer {
             .composite_name_window_pixmap(self.window, pixmap)
             .context("failed to name XComposite window pixmap")?;
 
-        let frame = capture_pixmap_bgra(&self.conn, pixmap)
+        let frame = if self.shm_enabled {
+            match self.capture_pixmap_bgra_shm(pixmap) {
+                Ok(frame) => Ok(frame),
+                Err(err) => {
+                    if !self.shm_warned {
+                        self.shm_warned = true;
+                        tracing::warn!(error = %err, "MIT-SHM capture failed, falling back to XGetImage");
+                    }
+                    self.shm_enabled = false;
+                    self.release_shm();
+                    capture_pixmap_bgra(&self.conn, pixmap)
+                }
+            }
+        } else {
+            capture_pixmap_bgra(&self.conn, pixmap)
+        }
             .with_context(|| format!("failed to capture pixmap for window {}", self.window))
             ?;
 
@@ -58,10 +91,108 @@ impl XCompositeCapturer {
         let _ = self.conn.flush();
         Ok(frame)
     }
+
+    fn capture_pixmap_bgra_shm(&mut self, pixmap: Pixmap) -> Result<CapturedFrame> {
+        let geometry = self
+            .conn
+            .get_geometry(pixmap)
+            .context("get_geometry failed")?
+            .reply()
+            .context("get_geometry reply failed")?;
+
+        let width = u16::max(geometry.width, 1);
+        let height = u16::max(geometry.height, 1);
+        let len = width as usize * height as usize * 4;
+        self.ensure_shm_capacity(len)?;
+
+        let shm = self
+            .shm
+            .as_ref()
+            .ok_or_else(|| anyhow!("internal error: shm segment missing"))?;
+        self.conn
+            .shm_get_image(
+                pixmap,
+                0,
+                0,
+                width,
+                height,
+                u32::MAX,
+                ImageFormat::Z_PIXMAP.into(),
+                shm.seg,
+                0,
+            )
+            .context("XShmGetImage request failed")?
+            .reply()
+            .context("XShmGetImage reply failed")?;
+
+        // SAFETY: `addr` points to an mmap'd shared memory region of at least `len` bytes.
+        let bgra = unsafe { std::slice::from_raw_parts(shm.addr, len) }.to_vec();
+        Ok(CapturedFrame {
+            width: width as u32,
+            height: height as u32,
+            bgra,
+        })
+    }
+
+    fn ensure_shm_capacity(&mut self, required_len: usize) -> Result<()> {
+        if self
+            .shm
+            .as_ref()
+            .map(|seg| seg.len >= required_len)
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        self.release_shm();
+
+        let seg = self
+            .conn
+            .generate_id()
+            .context("failed to generate shm seg id")?;
+        let reply = self
+            .conn
+            .shm_create_segment(seg, required_len as u32, false)
+            .context("XShmCreateSegment request failed")?
+            .reply()
+            .context("XShmCreateSegment reply failed")?;
+
+        // SAFETY: Mapping the server-provided FD for shared memory segment.
+        let addr = unsafe {
+            libc::mmap(
+                null_mut(),
+                required_len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                reply.shm_fd.as_raw_fd(),
+                0,
+            )
+        };
+        if addr == libc::MAP_FAILED {
+            let _ = self.conn.shm_detach(seg);
+            return Err(anyhow!("mmap failed for XShm segment"));
+        }
+
+        self.shm = Some(ShmSegment {
+            seg,
+            addr: addr.cast::<u8>(),
+            len: required_len,
+        });
+        Ok(())
+    }
+
+    fn release_shm(&mut self) {
+        if let Some(seg) = self.shm.take() {
+            let _ = self.conn.shm_detach(seg.seg);
+            // SAFETY: `addr`/`len` were returned by mmap in ensure_shm_capacity.
+            let _ = unsafe { libc::munmap(seg.addr.cast(), seg.len) };
+        }
+    }
 }
 
 impl Drop for XCompositeCapturer {
     fn drop(&mut self) {
+        self.release_shm();
         let _ = self.conn.flush();
     }
 }
