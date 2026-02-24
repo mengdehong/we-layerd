@@ -15,10 +15,13 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_surface_v1::{Anchor, Event as LayerSurfaceEvent, KeyboardInteractivity, ZwlrLayerSurfaceV1},
 };
 
+use crate::wayland::render_wgpu::WgpuRenderer;
+
 #[derive(Default)]
 struct AppState {
     running: bool,
     base_surface: Option<WlSurface>,
+    renderer: Option<WgpuRenderer>,
 }
 
 impl Dispatch<ZwlrLayerSurfaceV1, ()> for AppState {
@@ -40,6 +43,14 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for AppState {
                 layer_surface.ack_configure(serial);
                 if let Some(surface) = &state.base_surface {
                     surface.commit();
+                    let width = width.max(1);
+                    let height = height.max(1);
+                    if let Some(renderer) = &mut state.renderer {
+                        renderer.resize(width, height);
+                        if let Err(err) = renderer.render() {
+                            warn!(error = %err, "failed to render test pattern");
+                        }
+                    }
                 }
             }
             LayerSurfaceEvent::Closed => {
@@ -67,7 +78,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for AppState {
                 version,
             } => info!(name, interface, version, "wayland global announced"),
             wl_registry::Event::GlobalRemove { name } => {
-                warn!(name, "wayland global removed")
+                warn!(name, "wayland global removed");
             }
             _ => {}
         }
@@ -119,7 +130,22 @@ pub fn run_single_background_surface() -> Result<()> {
     let mut state = AppState {
         running: true,
         base_surface: Some(surface),
+        renderer: None,
     };
+
+    if let Some(surface) = &state.base_surface {
+        match WgpuRenderer::new(&conn, surface, 1920, 1080) {
+            Ok(mut renderer) => {
+                if let Err(err) = renderer.render() {
+                    warn!(error = %err, "initial render failed");
+                }
+                state.renderer = Some(renderer);
+            }
+            Err(err) => {
+                warn!(error = %err, "wgpu initialization failed; continuing without renderer");
+            }
+        }
+    }
 
     info!("wayland layer-shell loop started");
     while state.running {

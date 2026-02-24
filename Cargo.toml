@@ -11,6 +11,10 @@ toml = "0.8"
 thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wgpu = "0.20"
+pollster = "0.3"
+raw-window-handle = "0.6"
