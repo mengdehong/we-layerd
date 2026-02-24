@@ -31,6 +31,8 @@ pub struct LayerRunConfig {
     pub capture_window: Option<u32>,
     pub output_window_map: BTreeMap<String, u32>,
     pub fps_limit: u32,
+    pub show_fps: bool,
+    pub fps_report_interval_secs: u64,
     pub auto_refind_window: bool,
     pub capture_match: CaptureConfig,
     pub wine_pid: Option<u32>,
@@ -177,6 +179,9 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
 
     let fps = run_cfg.fps_limit.max(1);
     let frame_interval = Duration::from_secs_f64(1.0 / fps as f64);
+    let fps_report_interval = Duration::from_secs(run_cfg.fps_report_interval_secs.max(1));
+    let mut fps_window_start = Instant::now();
+    let mut fps_frame_count: u64 = 0;
     info!(outputs = state.outputs.len(), fps, "wayland multi-output loop started");
 
     while state.running {
@@ -251,6 +256,21 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
 
         if let Some(remaining) = frame_interval.checked_sub(start.elapsed()) {
             std::thread::sleep(remaining);
+        }
+
+        if run_cfg.show_fps {
+            fps_frame_count += 1;
+            let elapsed = fps_window_start.elapsed();
+            if elapsed >= fps_report_interval {
+                let measured = fps_frame_count as f64 / elapsed.as_secs_f64();
+                info!(
+                    measured_fps = format_args!("{measured:.1}"),
+                    sample_window_ms = elapsed.as_millis(),
+                    "runtime fps"
+                );
+                fps_window_start = Instant::now();
+                fps_frame_count = 0;
+            }
         }
     }
 

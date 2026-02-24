@@ -46,6 +46,8 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         capture_window,
         output_window_map: cfg.capture.output_window_map.clone(),
         fps_limit: cfg.general.fps_limit,
+        show_fps: cfg.general.show_fps,
+        fps_report_interval_secs: cfg.general.fps_report_interval_secs,
         auto_refind_window: cfg.general.refind_window_on_capture_error,
         capture_match,
         wine_pid,

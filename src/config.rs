@@ -21,6 +21,10 @@ pub struct GeneralConfig {
     pub restart_wine_on_exit: bool,
     #[serde(default = "default_refind_window")]
     pub refind_window_on_capture_error: bool,
+    #[serde(default)]
+    pub show_fps: bool,
+    #[serde(default = "default_fps_report_interval_secs")]
+    pub fps_report_interval_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +67,10 @@ fn default_refind_window() -> bool {
     true
 }
 
+fn default_fps_report_interval_secs() -> u64 {
+    1
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -79,6 +87,8 @@ impl Default for GeneralConfig {
             fps_limit: default_fps(),
             restart_wine_on_exit: default_restart_wine(),
             refind_window_on_capture_error: default_refind_window(),
+            show_fps: false,
+            fps_report_interval_secs: default_fps_report_interval_secs(),
         }
     }
 }
