@@ -1,7 +1,8 @@
 use std::{
     path::Path,
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -12,41 +13,16 @@ use crate::config::WineConfig;
 #[derive(Clone)]
 pub struct WineProcessHandle {
     child: Arc<Mutex<Option<Child>>>,
+    stop: Arc<AtomicBool>,
 }
 
 impl WineProcessHandle {
     pub fn spawn(config: &WineConfig) -> Result<Self> {
-        if config.wallpaper_exe.is_empty() {
-            return Err(anyhow!(
-                "wine.wallpaper_exe is empty; set the Wallpaper Engine executable path"
-            ));
-        }
-
-        let exe_path = Path::new(&config.wallpaper_exe);
-        if !exe_path.exists() {
-            return Err(anyhow!(
-                "Wallpaper executable does not exist: {}",
-                exe_path.display()
-            ));
-        }
-
-        let mut cmd = Command::new(&config.command);
-        cmd.args(&config.args)
-            .arg(&config.wallpaper_exe)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-
-        let child = cmd.spawn().with_context(|| {
-            format!(
-                "failed to spawn wine command '{}' for {}",
-                config.command,
-                config.wallpaper_exe
-            )
-        })?;
-
+        let child = spawn_child(config)?;
         info!(pid = child.id(), "spawned wine wallpaper process");
         Ok(Self {
             child: Arc::new(Mutex::new(Some(child))),
+            stop: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -62,6 +38,49 @@ impl WineProcessHandle {
         .context("failed to register Ctrl+C handler")
     }
 
+    pub fn install_exit_monitor(&self, config: WineConfig, restart_on_exit: bool) {
+        let child = self.child.clone();
+        let stop = self.stop.clone();
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let mut guard = match child.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => {
+                        warn!("wine child process lock poisoned");
+                        break;
+                    }
+                };
+
+                if let Some(proc) = guard.as_mut() {
+                    match proc.try_wait() {
+                        Ok(Some(status)) => {
+                            warn!(?status, "wine process exited");
+                            *guard = None;
+                            if restart_on_exit {
+                                match spawn_child(&config) {
+                                    Ok(new_child) => {
+                                        info!(pid = new_child.id(), "restarted wine process");
+                                        *guard = Some(new_child);
+                                    }
+                                    Err(err) => {
+                                        warn!(error = %err, "failed to restart wine process");
+                                    }
+                                }
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            warn!(error = %err, "failed to poll wine process status");
+                        }
+                    }
+                }
+
+                drop(guard);
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        });
+    }
+
     pub fn pid(&self) -> Option<u32> {
         self.child
             .lock()
@@ -70,6 +89,8 @@ impl WineProcessHandle {
     }
 
     pub fn terminate(&self) -> Result<()> {
+        self.stop.store(true, Ordering::Relaxed);
+
         let mut guard = self
             .child
             .lock()
@@ -96,4 +117,34 @@ impl Drop for WineProcessHandle {
             warn!(error = %err, "failed to cleanup wine process on drop");
         }
     }
+}
+
+fn spawn_child(config: &WineConfig) -> Result<Child> {
+    if config.wallpaper_exe.is_empty() {
+        return Err(anyhow!(
+            "wine.wallpaper_exe is empty; set the Wallpaper Engine executable path"
+        ));
+    }
+
+    let exe_path = Path::new(&config.wallpaper_exe);
+    if !exe_path.exists() {
+        return Err(anyhow!(
+            "Wallpaper executable does not exist: {}",
+            exe_path.display()
+        ));
+    }
+
+    let mut cmd = Command::new(&config.command);
+    cmd.args(&config.args)
+        .arg(&config.wallpaper_exe)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    cmd.spawn().with_context(|| {
+        format!(
+            "failed to spawn wine command '{}' for {}",
+            config.command,
+            config.wallpaper_exe
+        )
+    })
 }

@@ -17,8 +17,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Run { config } => app::run(config.as_deref()),
         Command::Doctor => {
-            app::doctor();
-            Ok(())
+            app::doctor()
         }
         Command::PrintConfig { config } => {
             let cfg = config::Config::load(config.as_deref())?;

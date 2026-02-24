@@ -17,6 +17,10 @@ pub struct Config {
 pub struct GeneralConfig {
     #[serde(default = "default_fps")]
     pub fps_limit: u32,
+    #[serde(default = "default_restart_wine")]
+    pub restart_wine_on_exit: bool,
+    #[serde(default = "default_refind_window")]
+    pub refind_window_on_capture_error: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +55,14 @@ fn default_wine_cmd() -> String {
     "wine".to_string()
 }
 
+fn default_restart_wine() -> bool {
+    true
+}
+
+fn default_refind_window() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -65,6 +77,8 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             fps_limit: default_fps(),
+            restart_wine_on_exit: default_restart_wine(),
+            refind_window_on_capture_error: default_refind_window(),
         }
     }
 }

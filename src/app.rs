@@ -13,9 +13,10 @@ use crate::{
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
     info!(?cfg, "starting we-layerd run mode");
-    let _wine = WineProcessHandle::spawn(&cfg.wine)?;
-    _wine.install_ctrlc_handler()?;
-    let wine_pid = _wine.pid();
+    let wine = WineProcessHandle::spawn(&cfg.wine)?;
+    wine.install_ctrlc_handler()?;
+    wine.install_exit_monitor(cfg.wine.clone(), cfg.general.restart_wine_on_exit);
+    let wine_pid = wine.pid();
     info!(pid = wine_pid, "wine launcher enabled");
 
     let capture_window = match window_finder::find_window_for_process(&cfg.capture, wine_pid)? {
@@ -38,14 +39,30 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         capture_window,
         output_window_map: cfg.capture.output_window_map.clone(),
         fps_limit: cfg.general.fps_limit,
+        auto_refind_window: cfg.general.refind_window_on_capture_error,
+        capture_match: cfg.capture.clone(),
+        wine_pid,
     })
 }
 
-pub fn doctor() {
+pub fn doctor() -> Result<()> {
     for key in ["WAYLAND_DISPLAY", "DISPLAY"] {
         match std::env::var(key) {
             Ok(value) => info!(%key, %value, "environment variable set"),
             Err(_) => warn!(%key, "environment variable not set"),
         }
     }
+
+    match capture_xcomposite::probe_xcomposite_support() {
+        Ok(()) => info!("XComposite extension probe: OK"),
+        Err(err) => warn!(error = %err, "XComposite extension probe failed"),
+    }
+
+    match wayland::layer_shell::probe_layer_shell_support() {
+        Ok(true) => info!("zwlr_layer_shell_v1 global is available"),
+        Ok(false) => warn!("zwlr_layer_shell_v1 global not found on this compositor"),
+        Err(err) => warn!(error = %err, "failed to query Wayland layer-shell support"),
+    }
+
+    Ok(())
 }

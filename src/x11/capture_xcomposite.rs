@@ -46,6 +46,15 @@ pub fn capture_single_frame(window: Window) -> Result<CapturedFrame> {
     frame
 }
 
+pub fn probe_xcomposite_support() -> Result<()> {
+    let (conn, _) = RustConnection::connect(None).context("failed to connect to X11 display")?;
+    conn.composite_query_version(0, 4)
+        .context("failed to query XComposite extension")?
+        .reply()
+        .context("failed to receive XComposite version reply")?;
+    Ok(())
+}
+
 fn capture_pixmap_bgra(conn: &RustConnection, pixmap: Pixmap) -> Result<CapturedFrame> {
     let geometry = conn
         .get_geometry(pixmap)

@@ -18,8 +18,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use crate::{
+    config::CaptureConfig,
     wayland::{outputs, render_wgpu::WgpuRenderer},
-    x11::capture_xcomposite,
+    x11::{capture_xcomposite, window_finder},
 };
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,9 @@ pub struct LayerRunConfig {
     pub capture_window: Option<u32>,
     pub output_window_map: BTreeMap<String, u32>,
     pub fps_limit: u32,
+    pub auto_refind_window: bool,
+    pub capture_match: CaptureConfig,
+    pub wine_pid: Option<u32>,
 }
 
 struct OutputSurface {
@@ -188,6 +192,15 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
                         }
                         Err(err) => {
                             warn!(error = %err, output = %output.name, window, "capture failed for output");
+                            if run_cfg.auto_refind_window {
+                                if let Ok(Some(found)) = window_finder::find_window_for_process(
+                                    &run_cfg.capture_match,
+                                    run_cfg.wine_pid,
+                                ) {
+                                    output.capture_window = Some(found.window);
+                                    info!(output = %output.name, window = found.window, "rebound output to rediscovered X11 window");
+                                }
+                            }
                         }
                     }
                 }
@@ -204,6 +217,18 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn probe_layer_shell_support() -> Result<bool> {
+    let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
+    let (globals, _event_queue) = registry_queue_init::<AppState>(&conn)
+        .context("failed to initialize Wayland registry")?;
+    let present = globals
+        .contents()
+        .clone_list()
+        .iter()
+        .any(|g| g.interface == "zwlr_layer_shell_v1");
+    Ok(present)
 }
 
 fn create_output_surface(
