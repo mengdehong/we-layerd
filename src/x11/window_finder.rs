@@ -191,8 +191,7 @@ fn window_metadata(conn: &RustConnection, atoms: &Atoms, window: Window) -> Resu
     })
 }
 
-fn is_match(config: &CaptureConfig, target_pid: Option<u32>, meta: &WindowMetadata) -> bool {
-    let pid_ok = target_pid.map_or(true, |pid| meta.pid == Some(pid));
+fn is_match(config: &CaptureConfig, _target_pid: Option<u32>, meta: &WindowMetadata) -> bool {
     let class_ok = config
         .wm_class_contains
         .as_ref()
@@ -202,7 +201,7 @@ fn is_match(config: &CaptureConfig, target_pid: Option<u32>, meta: &WindowMetada
         .as_ref()
         .map_or(true, |needle| contains_case_insensitive(&meta.title, needle));
 
-    pid_ok && class_ok && title_ok
+    class_ok && title_ok
 }
 
 fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {

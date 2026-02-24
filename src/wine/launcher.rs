@@ -135,8 +135,8 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
     }
 
     let mut cmd = Command::new(&config.command);
-    cmd.args(&config.args)
-        .arg(&config.wallpaper_exe)
+    cmd.arg(&config.wallpaper_exe)
+        .args(&config.args)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 

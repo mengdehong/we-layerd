@@ -48,6 +48,7 @@ pub struct WgpuRenderer {
     bind_group: wgpu::BindGroup,
     texture: wgpu::Texture,
     texture_size: (u32, u32),
+    max_texture_dimension_2d: u32,
 }
 
 impl WgpuRenderer {
@@ -81,11 +82,12 @@ impl WgpuRenderer {
         }))
         .ok_or_else(|| anyhow!("no suitable wgpu adapter found"))?;
 
+        let adapter_limits = adapter.limits();
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("we-layerd-device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                required_limits: adapter_limits.clone(),
             },
             None,
         ))
@@ -189,6 +191,7 @@ impl WgpuRenderer {
             bind_group,
             texture,
             texture_size: (2, 2),
+            max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
         })
     }
 
@@ -199,6 +202,16 @@ impl WgpuRenderer {
     }
 
     pub fn upload_rgba(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
+        if width > self.max_texture_dimension_2d || height > self.max_texture_dimension_2d {
+            return Err(anyhow!(
+                "frame size {}x{} exceeds GPU texture limit {}x{}",
+                width,
+                height,
+                self.max_texture_dimension_2d,
+                self.max_texture_dimension_2d
+            ));
+        }
+
         let expected = width as usize * height as usize * 4;
         if rgba.len() < expected {
             return Err(anyhow!(
