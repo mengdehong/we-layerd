@@ -15,15 +15,18 @@ use crate::config::WineConfig;
 #[derive(Clone)]
 pub struct WineProcessHandle {
     child: Arc<Mutex<Option<Child>>>,
+    pgid: Arc<Mutex<Option<i32>>>,
     stop: Arc<AtomicBool>,
 }
 
 impl WineProcessHandle {
     pub fn spawn(config: &WineConfig) -> Result<Self> {
         let child = spawn_child(config)?;
-        info!(pid = child.id(), "spawned wine wallpaper process");
+        let pgid = child.id() as i32;
+        info!(pid = child.id(), pgid, "spawned wine wallpaper process");
         Ok(Self {
             child: Arc::new(Mutex::new(Some(child))),
+            pgid: Arc::new(Mutex::new(Some(pgid))),
             stop: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -42,6 +45,7 @@ impl WineProcessHandle {
 
     pub fn install_exit_monitor(&self, config: WineConfig, restart_on_exit: bool) {
         let child = self.child.clone();
+        let pgid = self.pgid.clone();
         let stop = self.stop.clone();
         std::thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
@@ -58,11 +62,24 @@ impl WineProcessHandle {
                         Ok(Some(status)) => {
                             warn!(?status, "wine process exited");
                             *guard = None;
+                            if let Ok(mut pgid_guard) = pgid.lock() {
+                                *pgid_guard = None;
+                            }
+
+                            if stop.load(Ordering::Relaxed) {
+                                drop(guard);
+                                break;
+                            }
+
                             let should_restart = restart_on_exit && !status.success();
                             if should_restart {
                                 match spawn_child(&config) {
                                     Ok(new_child) => {
-                                        info!(pid = new_child.id(), "restarted wine process");
+                                        let new_pgid = new_child.id() as i32;
+                                        info!(pid = new_child.id(), pgid = new_pgid, "restarted wine process");
+                                        if let Ok(mut pgid_guard) = pgid.lock() {
+                                            *pgid_guard = Some(new_pgid);
+                                        }
                                         *guard = Some(new_child);
                                     }
                                     Err(err) => {
@@ -96,18 +113,32 @@ impl WineProcessHandle {
     pub fn terminate(&self) -> Result<()> {
         self.stop.store(true, Ordering::Relaxed);
 
+        let pgid = {
+            let guard = self
+                .pgid
+                .lock()
+                .map_err(|_| anyhow!("wine process group lock poisoned"))?;
+            *guard
+        };
+
+        if let Some(pgid) = pgid {
+            terminate_process_group(pgid)?;
+        }
+
         let mut guard = self
             .child
             .lock()
             .map_err(|_| anyhow!("wine child process lock poisoned"))?;
 
         if let Some(child) = guard.as_mut() {
-            terminate_process_group(child)?;
             let _ = child.wait();
             info!("wine process terminated");
         }
 
         *guard = None;
+        if let Ok(mut pgid_guard) = self.pgid.lock() {
+            *pgid_guard = None;
+        }
         Ok(())
     }
 }
@@ -163,23 +194,19 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
     })
 }
 
-fn terminate_process_group(child: &mut Child) -> Result<()> {
-    let pid = child.id() as i32;
-    let pgid = -pid;
-
-    if !signal_process_group(pgid, libc::SIGTERM)? {
+fn terminate_process_group(pgid: i32) -> Result<()> {
+    if !signal_process_group(-pgid, libc::SIGTERM)? {
         return Ok(());
     }
 
     for _ in 0..20 {
-        match child.try_wait() {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-            Err(err) => return Err(err).context("failed to wait for wine process after SIGTERM"),
+        if !signal_process_group(-pgid, 0)? {
+            return Ok(());
         }
+        std::thread::sleep(Duration::from_millis(100));
     }
 
-    signal_process_group(pgid, libc::SIGKILL)?;
+    signal_process_group(-pgid, libc::SIGKILL)?;
     Ok(())
 }
 
