@@ -18,7 +18,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let wine_pid = _wine.pid();
     info!(pid = wine_pid, "wine launcher enabled");
 
-    match window_finder::find_window_for_process(&cfg.capture, wine_pid)? {
+    let capture_window = match window_finder::find_window_for_process(&cfg.capture, wine_pid)? {
         Some(found) => {
             info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
             if let Some(path) = cfg.capture.debug_save_frame_png.as_deref() {
@@ -26,11 +26,18 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                 capture_xcomposite::save_frame_png(&frame, Path::new(path))?;
                 info!(path, "saved debug XComposite frame");
             }
+            Some(found.window)
         }
-        None => warn!("no X11 window found yet, continuing with Wayland layer loop"),
-    }
+        None => {
+            warn!("no X11 window found yet, continuing with Wayland layer loop");
+            None
+        }
+    };
 
-    wayland::layer_shell::run_single_background_surface()
+    wayland::layer_shell::run_single_background_surface(wayland::layer_shell::LayerRunConfig {
+        capture_window,
+        fps_limit: cfg.general.fps_limit,
+    })
 }
 
 pub fn doctor() {
