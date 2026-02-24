@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,8 @@ pub struct CaptureConfig {
     pub net_wm_pid: Option<u32>,
     #[serde(default)]
     pub debug_save_frame_png: Option<String>,
+    #[serde(default)]
+    pub output_window_map: BTreeMap<String, u32>,
 }
 
 fn default_fps() -> u32 {
@@ -84,6 +86,7 @@ impl Default for CaptureConfig {
             title_contains: None,
             net_wm_pid: None,
             debug_save_frame_png: None,
+            output_window_map: BTreeMap::new(),
         }
     }
 }

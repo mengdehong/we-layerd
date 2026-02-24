@@ -36,6 +36,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
 
     wayland::layer_shell::run_single_background_surface(wayland::layer_shell::LayerRunConfig {
         capture_window,
+        output_window_map: cfg.capture.output_window_map.clone(),
         fps_limit: cfg.general.fps_limit,
     })
 }

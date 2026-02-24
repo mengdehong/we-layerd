@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::{collections::BTreeMap, time::{Duration, Instant}};
 
 use anyhow::{Context, Result};
 use tracing::{error, info, warn};
@@ -17,28 +17,37 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_surface_v1::{Anchor, Event as LayerSurfaceEvent, KeyboardInteractivity, ZwlrLayerSurfaceV1},
 };
 
-use crate::{wayland::render_wgpu::WgpuRenderer, x11::capture_xcomposite};
+use crate::{
+    wayland::{outputs, render_wgpu::WgpuRenderer},
+    x11::capture_xcomposite,
+};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LayerRunConfig {
     pub capture_window: Option<u32>,
+    pub output_window_map: BTreeMap<String, u32>,
     pub fps_limit: u32,
+}
+
+struct OutputSurface {
+    name: String,
+    surface: WlSurface,
+    renderer: Option<WgpuRenderer>,
+    capture_window: Option<u32>,
 }
 
 #[derive(Default)]
 struct AppState {
     running: bool,
-    base_surface: Option<WlSurface>,
-    renderer: Option<WgpuRenderer>,
-    frame_size: (u32, u32),
+    outputs: Vec<OutputSurface>,
 }
 
-impl Dispatch<ZwlrLayerSurfaceV1, ()> for AppState {
+impl Dispatch<ZwlrLayerSurfaceV1, usize> for AppState {
     fn event(
         state: &mut Self,
         layer_surface: &ZwlrLayerSurfaceV1,
         event: LayerSurfaceEvent,
-        _data: &(),
+        index: &usize,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
@@ -48,22 +57,16 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for AppState {
                 width,
                 height,
             } => {
-                info!(serial, width, height, "layer surface configured");
                 layer_surface.ack_configure(serial);
-                if let Some(surface) = &state.base_surface {
-                    surface.commit();
-                }
-
-                let width = width.max(1);
-                let height = height.max(1);
-                state.frame_size = (width, height);
-
-                if let Some(renderer) = &mut state.renderer {
-                    renderer.resize(width, height);
+                if let Some(output) = state.outputs.get_mut(*index) {
+                    output.surface.commit();
+                    if let Some(renderer) = &mut output.renderer {
+                        renderer.resize(width.max(1), height.max(1));
+                    }
                 }
             }
             LayerSurfaceEvent::Closed => {
-                warn!("layer surface closed by compositor");
+                warn!(index = *index, "layer surface closed by compositor");
                 state.running = false;
             }
             _ => {}
@@ -113,14 +116,115 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
         .bind(&qh, 1..=5, ())
         .context("failed to bind zwlr_layer_shell_v1")?;
 
-    let surface = compositor.create_surface(&qh, ());
+    let globals_snapshot = globals.contents().clone_list();
+    let output_globals = outputs::output_globals(&globals_snapshot);
+
+    let mut state = AppState {
+        running: true,
+        outputs: Vec::new(),
+    };
+
+    if output_globals.is_empty() {
+        warn!("no wl_output globals reported, creating fallback layer surface");
+        create_output_surface(
+            &mut state,
+            &conn,
+            &qh,
+            &compositor,
+            &layer_shell,
+            "output-fallback".to_string(),
+            None,
+            run_cfg.capture_window,
+        )?;
+    } else {
+        for (index, global) in output_globals.iter().enumerate() {
+            let output = outputs::bind_output::<AppState>(globals.registry(), &qh, global)?;
+            let name = format!("output-{}", global.name);
+
+            let capture_window = if index == 0 {
+                run_cfg.capture_window
+            } else {
+                run_cfg
+                    .output_window_map
+                    .get(&name)
+                    .copied()
+                    .or(run_cfg.capture_window)
+            };
+
+            create_output_surface(
+                &mut state,
+                &conn,
+                &qh,
+                &compositor,
+                &layer_shell,
+                name,
+                Some(&output),
+                capture_window,
+            )?;
+        }
+    }
+
+    let _ = event_queue.roundtrip(&mut state);
+
+    let fps = run_cfg.fps_limit.max(1);
+    let frame_interval = Duration::from_secs_f64(1.0 / fps as f64);
+    info!(outputs = state.outputs.len(), fps, "wayland multi-output loop started");
+
+    while state.running {
+        let start = Instant::now();
+
+        if let Err(err) = event_queue.dispatch_pending(&mut state) {
+            error!(error = %err, "wayland event dispatch failed");
+        }
+
+        for output in &mut state.outputs {
+            if let Some(renderer) = &mut output.renderer {
+                if let Some(window) = output.capture_window {
+                    match capture_xcomposite::capture_single_frame(window) {
+                        Ok(frame) => {
+                            if let Err(err) = renderer.upload_rgba(frame.width, frame.height, &frame.rgba) {
+                                warn!(error = %err, output = %output.name, "failed to upload frame");
+                            }
+                        }
+                        Err(err) => {
+                            warn!(error = %err, output = %output.name, window, "capture failed for output");
+                        }
+                    }
+                }
+
+                if let Err(err) = renderer.render() {
+                    warn!(error = %err, output = %output.name, "render failed for output");
+                }
+            }
+        }
+
+        if let Some(remaining) = frame_interval.checked_sub(start.elapsed()) {
+            std::thread::sleep(remaining);
+        }
+    }
+
+    Ok(())
+}
+
+fn create_output_surface(
+    state: &mut AppState,
+    conn: &Connection,
+    qh: &QueueHandle<AppState>,
+    compositor: &WlCompositor,
+    layer_shell: &ZwlrLayerShellV1,
+    name: String,
+    wl_output: Option<&WlOutput>,
+    capture_window: Option<u32>,
+) -> Result<()> {
+    let index = state.outputs.len();
+    let surface = compositor.create_surface(qh, ());
     let layer_surface = layer_shell.get_layer_surface(
         &surface,
-        None::<&WlOutput>,
+        wl_output,
         Layer::Background,
-        "we-layerd".to_string(),
-        &qh,
-        (),
+        format!("we-layerd-{}", index),
+        qh,
+        index,
     );
 
     let anchor_all = Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right;
@@ -129,65 +233,26 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
     layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
     layer_surface.set_size(0, 0);
 
-    let region = compositor.create_region(&qh, ());
-    // Empty input region enables click-through background behavior.
+    let region = compositor.create_region(qh, ());
     surface.set_input_region(Some(&region));
     region.destroy();
-
     surface.commit();
 
-    let mut state = AppState {
-        running: true,
-        base_surface: Some(surface),
-        renderer: None,
-        frame_size: (1920, 1080),
+    let renderer = match WgpuRenderer::new(conn, &surface, 1920, 1080) {
+        Ok(renderer) => Some(renderer),
+        Err(err) => {
+            warn!(error = %err, output = %name, "wgpu initialization failed for output");
+            None
+        }
     };
 
-    if let Some(surface) = &state.base_surface {
-        match WgpuRenderer::new(&conn, surface, 1920, 1080) {
-            Ok(renderer) => state.renderer = Some(renderer),
-            Err(err) => {
-                warn!(error = %err, "wgpu initialization failed; continuing without renderer");
-            }
-        }
-    }
-
-    let _ = event_queue.roundtrip(&mut state);
-
-    let fps = run_cfg.fps_limit.max(1);
-    let frame_interval = Duration::from_secs_f64(1.0 / fps as f64);
-
-    info!(fps, "wayland layer-shell render loop started");
-    while state.running {
-        let start = Instant::now();
-
-        if let Err(err) = event_queue.dispatch_pending(&mut state) {
-            error!(error = %err, "wayland event dispatch failed");
-        }
-
-        if let Some(renderer) = &mut state.renderer {
-            if let Some(window) = run_cfg.capture_window {
-                match capture_xcomposite::capture_single_frame(window) {
-                    Ok(frame) => {
-                        if let Err(err) = renderer.upload_rgba(frame.width, frame.height, &frame.rgba) {
-                            warn!(error = %err, "failed to upload captured frame");
-                        }
-                    }
-                    Err(err) => {
-                        warn!(error = %err, window, "XComposite capture failed for frame");
-                    }
-                }
-            }
-
-            if let Err(err) = renderer.render() {
-                warn!(error = %err, "frame rendering failed");
-            }
-        }
-
-        if let Some(remaining) = frame_interval.checked_sub(start.elapsed()) {
-            std::thread::sleep(remaining);
-        }
-    }
+    info!(output = %name, ?capture_window, "created layer surface for output");
+    state.outputs.push(OutputSurface {
+        name,
+        surface,
+        renderer,
+        capture_window,
+    });
 
     Ok(())
 }
