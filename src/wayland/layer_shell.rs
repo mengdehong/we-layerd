@@ -46,6 +46,8 @@ struct OutputSurface {
     capture_window: Option<u32>,
     capturer: Option<capture_xcomposite::XCompositeCapturer>,
     last_refind_attempt: Option<Instant>,
+    configured_once: bool,
+    render_fail_streak: u64,
 }
 
 #[derive(Default)]
@@ -71,6 +73,24 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for AppState {
             } => {
                 layer_surface.ack_configure(serial);
                 if let Some(output) = state.outputs.get_mut(*index) {
+                    if !output.configured_once {
+                        output.configured_once = true;
+                        info!(
+                            output = %output.name,
+                            serial,
+                            width,
+                            height,
+                            "received initial layer-surface configure"
+                        );
+                    } else {
+                        info!(
+                            output = %output.name,
+                            serial,
+                            width,
+                            height,
+                            "received layer-surface configure"
+                        );
+                    }
                     output.surface.commit();
                     if let Some(renderer) = &mut output.renderer {
                         renderer.resize(width.max(1), height.max(1));
@@ -256,7 +276,23 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
                 }
 
                 if let Err(err) = renderer.render() {
-                    warn!(error = %err, output = %output.name, "render failed for output");
+                    output.render_fail_streak += 1;
+                    if output.render_fail_streak <= 5 || output.render_fail_streak % 120 == 0 {
+                        warn!(
+                            error = %err,
+                            output = %output.name,
+                            streak = output.render_fail_streak,
+                            configured_once = output.configured_once,
+                            "render failed for output"
+                        );
+                    }
+                } else if output.render_fail_streak > 0 {
+                    info!(
+                        output = %output.name,
+                        recovered_after = output.render_fail_streak,
+                        "render path recovered"
+                    );
+                    output.render_fail_streak = 0;
                 }
             }
         }
@@ -341,6 +377,8 @@ fn create_output_surface(
         capture_window,
         capturer: None,
         last_refind_attempt: None,
+        configured_once: false,
+        render_fail_streak: 0,
     });
 
     Ok(())

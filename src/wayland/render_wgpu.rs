@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
+use tracing::{info, warn};
 use wayland_client::{protocol::wl_surface::WlSurface, Connection, Proxy};
 
 use crate::config::ScaleMode;
@@ -202,6 +203,8 @@ pub struct WgpuRenderer {
     texture: wgpu::Texture,
     texture_size: (u32, u32),
     max_texture_dimension_2d: u32,
+    frame_seq: u64,
+    acquire_fail_streak: u64,
 }
 
 impl WgpuRenderer {
@@ -270,6 +273,15 @@ impl WgpuRenderer {
             view_formats: vec![],
         };
         surface.configure(&device, &config);
+        info!(
+            width = config.width,
+            height = config.height,
+            ?config.format,
+            ?config.present_mode,
+            ?config.alpha_mode,
+            max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d,
+            "configured wgpu surface"
+        );
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("we-layerd-texture-layout"),
@@ -376,6 +388,8 @@ impl WgpuRenderer {
             texture,
             texture_size: (2, 2),
             max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+            frame_seq: 0,
+            acquire_fail_streak: 0,
         })
     }
 
@@ -388,6 +402,7 @@ impl WgpuRenderer {
         self.config.width = next_width;
         self.config.height = next_height;
         self.surface.configure(&self.device, &self.config);
+        info!(width = next_width, height = next_height, "reconfigured wgpu surface after resize");
         self.overlay.surface_width = self.config.width as f32;
         self.overlay.surface_height = self.config.height as f32;
         self.overlay_dirty = true;
@@ -455,6 +470,14 @@ impl WgpuRenderer {
         }
 
         if self.texture_size != (width, height) {
+            info!(
+                old_width = self.texture_size.0,
+                old_height = self.texture_size.1,
+                new_width = width,
+                new_height = height,
+                stride,
+                "recreating frame texture resources"
+            );
             let (texture, bind_group) =
                 create_texture_resources(
                     &self.device,
@@ -497,11 +520,37 @@ impl WgpuRenderer {
 
     pub fn render(&mut self) -> Result<()> {
         self.flush_overlay_if_dirty();
+        self.frame_seq += 1;
 
-        let frame = self
-            .surface
-            .get_current_texture()
-            .context("failed to acquire frame from wgpu surface")?;
+        let frame = match self.surface.get_current_texture() {
+            Ok(frame) => {
+                if self.acquire_fail_streak > 0 {
+                    info!(
+                        recovered_after = self.acquire_fail_streak,
+                        frame_seq = self.frame_seq,
+                        "wgpu surface acquire recovered"
+                    );
+                    self.acquire_fail_streak = 0;
+                }
+                frame
+            }
+            Err(err) => {
+                self.acquire_fail_streak += 1;
+                if self.acquire_fail_streak <= 5 || self.acquire_fail_streak % 120 == 0 {
+                    warn!(
+                        error = ?err,
+                        streak = self.acquire_fail_streak,
+                        frame_seq = self.frame_seq,
+                        surface_width = self.config.width,
+                        surface_height = self.config.height,
+                        texture_width = self.texture_size.0,
+                        texture_height = self.texture_size.1,
+                        "failed to acquire frame from wgpu surface"
+                    );
+                }
+                return Err(anyhow!("failed to acquire frame from wgpu surface: {err:?}"));
+            }
+        };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
