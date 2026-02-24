@@ -16,6 +16,7 @@ use x11rb::{
 pub struct CapturedFrame {
     pub width: u32,
     pub height: u32,
+    pub stride: u32,
     pub bgra: Vec<u8>,
 }
 
@@ -102,7 +103,23 @@ impl XCompositeCapturer {
 
         let width = u16::max(geometry.width, 1);
         let height = u16::max(geometry.height, 1);
-        let len = width as usize * height as usize * 4;
+        if geometry.depth < 24 {
+            return Err(anyhow!(
+                "unsupported X11 image depth {}, expected at least 24",
+                geometry.depth
+            ));
+        }
+
+        let packed_stride = width as usize * 4;
+        let stride = x11_stride_for_depth(&self.conn, geometry.depth, width)?;
+        if stride < packed_stride {
+            return Err(anyhow!(
+                "invalid X11 row stride {} for width {}",
+                stride,
+                width
+            ));
+        }
+        let len = stride * height as usize;
         self.ensure_shm_capacity(len)?;
 
         let shm = self
@@ -126,10 +143,24 @@ impl XCompositeCapturer {
             .context("XShmGetImage reply failed")?;
 
         // SAFETY: `addr` points to an mmap'd shared memory region of at least `len` bytes.
-        let bgra = unsafe { std::slice::from_raw_parts(shm.addr, len) }.to_vec();
+        let shm_data = unsafe { std::slice::from_raw_parts(shm.addr, len) };
+        let bgra = if stride == packed_stride {
+            shm_data.to_vec()
+        } else {
+            let mut packed = vec![0u8; packed_stride * height as usize];
+            for row in 0..height as usize {
+                let src_start = row * stride;
+                let src_end = src_start + packed_stride;
+                let dst_start = row * packed_stride;
+                let dst_end = dst_start + packed_stride;
+                packed[dst_start..dst_end].copy_from_slice(&shm_data[src_start..src_end]);
+            }
+            packed
+        };
         Ok(CapturedFrame {
             width: width as u32,
             height: height as u32,
+            stride: packed_stride as u32,
             bgra,
         })
     }
@@ -261,8 +292,32 @@ fn capture_pixmap_bgra(conn: &RustConnection, pixmap: Pixmap) -> Result<Captured
     Ok(CapturedFrame {
         width: width as u32,
         height: height as u32,
+        stride: (width as u32) * 4,
         bgra,
     })
+}
+
+fn x11_stride_for_depth(conn: &RustConnection, depth: u8, width: u16) -> Result<usize> {
+    let format = conn
+        .setup()
+        .pixmap_formats
+        .iter()
+        .find(|fmt| fmt.depth == depth)
+        .ok_or_else(|| anyhow!("missing pixmap format for depth {}", depth))?;
+
+    let bits_per_pixel = usize::from(format.bits_per_pixel);
+    if bits_per_pixel < 32 {
+        return Err(anyhow!(
+            "unsupported bits_per_pixel {} for depth {}",
+            bits_per_pixel,
+            depth
+        ));
+    }
+
+    let scanline_pad = usize::from(format.scanline_pad.max(8));
+    let row_bits = usize::from(width) * bits_per_pixel;
+    let stride_bits = ((row_bits + scanline_pad - 1) / scanline_pad) * scanline_pad;
+    Ok(stride_bits / 8)
 }
 
 pub fn save_frame_png(frame: &CapturedFrame, path: &Path) -> Result<()> {

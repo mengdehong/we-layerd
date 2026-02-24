@@ -292,7 +292,7 @@ impl WgpuRenderer {
         });
         queue.write_buffer(&overlay_buffer, 0, bytemuck::bytes_of(&overlay));
 
-        let (texture, bind_group) = create_texture_resources(&device, &queue, &bind_group_layout, &overlay_buffer, 2, 2, &[
+        let (texture, bind_group) = create_texture_resources(&device, &queue, &bind_group_layout, &overlay_buffer, 2, 2, 2 * 4, &[
             40, 40, 40, 255, 80, 80, 80, 255,
             80, 80, 80, 255, 40, 40, 40, 255,
         ]);
@@ -330,7 +330,7 @@ impl WgpuRenderer {
             .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
     }
 
-    pub fn upload_bgra(&mut self, width: u32, height: u32, bgra: &[u8]) -> Result<()> {
+    pub fn upload_bgra(&mut self, width: u32, height: u32, stride: u32, bgra: &[u8]) -> Result<()> {
         if width > self.max_texture_dimension_2d || height > self.max_texture_dimension_2d {
             return Err(anyhow!(
                 "frame size {}x{} exceeds GPU texture limit {}x{}",
@@ -341,7 +341,20 @@ impl WgpuRenderer {
             ));
         }
 
-        let expected = width as usize * height as usize * 4;
+        let packed_row = width as usize * 4;
+        let stride = stride as usize;
+        if stride < packed_row {
+            return Err(anyhow!(
+                "invalid frame stride: got {}, expected >= {}",
+                stride,
+                packed_row
+            ));
+        }
+        let expected = if height == 0 {
+            0
+        } else {
+            stride * (height as usize - 1) + packed_row
+        };
         if bgra.len() < expected {
             return Err(anyhow!(
                 "invalid frame payload: got {}, expected at least {}",
@@ -359,6 +372,7 @@ impl WgpuRenderer {
                     &self.overlay_buffer,
                     width,
                     height,
+                    stride as u32,
                     bgra,
                 );
             self.texture = texture;
@@ -377,7 +391,7 @@ impl WgpuRenderer {
             &bgra[..expected],
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(width * 4),
+                bytes_per_row: Some(stride as u32),
                 rows_per_image: Some(height),
             },
             wgpu::Extent3d {
@@ -438,6 +452,7 @@ fn create_texture_resources(
     overlay_buffer: &wgpu::Buffer,
     width: u32,
     height: u32,
+    stride: u32,
     bgra: &[u8],
 ) -> (wgpu::Texture, wgpu::BindGroup) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -465,7 +480,7 @@ fn create_texture_resources(
         bgra,
         wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: Some(width * 4),
+            bytes_per_row: Some(stride),
             rows_per_image: Some(height),
         },
         wgpu::Extent3d {

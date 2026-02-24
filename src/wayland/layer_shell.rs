@@ -244,7 +244,12 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
                     }
 
                     if let Some(frame) = frame_cache.get(&window) {
-                        if let Err(err) = renderer.upload_bgra(frame.width, frame.height, &frame.bgra) {
+                        if let Err(err) = renderer.upload_bgra(
+                            frame.width,
+                            frame.height,
+                            frame.stride,
+                            &frame.bgra,
+                        ) {
                             warn!(error = %err, output = %output.name, "failed to upload frame");
                         }
                     }
