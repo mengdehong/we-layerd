@@ -4,6 +4,17 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle,
 use wayland_client::{protocol::wl_surface::WlSurface, Connection, Proxy};
 
 const SHADER: &str = r#"
+struct OverlayUniform {
+    surface_width: f32,
+    surface_height: f32,
+    fps: f32,
+    show: f32,
+    source_width: f32,
+    source_height: f32,
+    _pad0: f32,
+    _pad1: f32,
+};
+
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -14,7 +25,7 @@ var tex: texture_2d<f32>;
 @group(0) @binding(1)
 var tex_sampler: sampler;
 @group(0) @binding(2)
-var<uniform> overlay: vec4<f32>; // x=width, y=height, z=fps, w=show(0/1)
+var<uniform> overlay: OverlayUniform;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
@@ -37,8 +48,32 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
 
 @fragment
 fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
-    var color = textureSample(tex, tex_sampler, inf.uv);
-    if (overlay.w < 0.5) {
+    let dst_w = max(overlay.surface_width, 1.0);
+    let dst_h = max(overlay.surface_height, 1.0);
+    let src_w = max(overlay.source_width, 1.0);
+    let src_h = max(overlay.source_height, 1.0);
+    let src_aspect = src_w / src_h;
+    let dst_aspect = dst_w / dst_h;
+
+    var sample_uv = inf.uv;
+    var inside = true;
+    if (src_aspect > dst_aspect) {
+        let visible_h = dst_aspect / src_aspect;
+        let y = (sample_uv.y - (1.0 - visible_h) * 0.5) / visible_h;
+        inside = y >= 0.0 && y <= 1.0;
+        sample_uv.y = y;
+    } else if (src_aspect < dst_aspect) {
+        let visible_w = src_aspect / dst_aspect;
+        let x = (sample_uv.x - (1.0 - visible_w) * 0.5) / visible_w;
+        inside = x >= 0.0 && x <= 1.0;
+        sample_uv.x = x;
+    }
+
+    var color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    if (inside) {
+        color = textureSample(tex, tex_sampler, sample_uv);
+    }
+    if (overlay.show < 0.5) {
         return color;
     }
 
@@ -49,16 +84,16 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
     let gap = 4.0;
     let margin = 16.0;
     let total_w = digit_w * 3.0 + gap * 2.0;
-    let origin = vec2<f32>(overlay.x - margin - total_w, overlay.y - margin - digit_h);
+    let origin = vec2<f32>(overlay.surface_width - margin - total_w, overlay.surface_height - margin - digit_h);
 
-    let fps_i = i32(clamp(round(overlay.z), 0.0, 999.0));
+    let fps_i = i32(clamp(round(overlay.fps), 0.0, 999.0));
     let d0 = fps_i / 100;
     let d1 = (fps_i / 10) % 10;
     let d2 = fps_i % 10;
     let show_hundreds = fps_i >= 100;
 
     let bg_min = origin - vec2<f32>(8.0, 8.0);
-    let bg_max = vec2<f32>(overlay.x - margin + 8.0, overlay.y - margin + 8.0);
+    let bg_max = vec2<f32>(overlay.surface_width - margin + 8.0, overlay.surface_height - margin + 8.0);
     let in_bg = p.x >= bg_min.x && p.x <= bg_max.x && p.y >= bg_min.y && p.y <= bg_max.y;
     if (in_bg) {
         color = color * vec4<f32>(0.6, 0.6, 0.6, 1.0);
@@ -122,10 +157,14 @@ fn draw_digit(p: vec2<f32>, origin: vec2<f32>, w: i32, digit_w: f32, digit_h: f3
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct OverlayUniform {
-    width: f32,
-    height: f32,
+    surface_width: f32,
+    surface_height: f32,
     fps: f32,
     show: f32,
+    source_width: f32,
+    source_height: f32,
+    pad0: f32,
+    pad1: f32,
 }
 
 pub struct WgpuRenderer {
@@ -279,10 +318,14 @@ impl WgpuRenderer {
         });
 
         let overlay = OverlayUniform {
-            width: width.max(1) as f32,
-            height: height.max(1) as f32,
+            surface_width: width.max(1) as f32,
+            surface_height: height.max(1) as f32,
             fps: 0.0,
             show: 0.0,
+            source_width: 1.0,
+            source_height: 1.0,
+            pad0: 0.0,
+            pad1: 0.0,
         };
         let overlay_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("we-layerd-overlay-uniform"),
@@ -317,8 +360,8 @@ impl WgpuRenderer {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
-        self.overlay.width = self.config.width as f32;
-        self.overlay.height = self.config.height as f32;
+        self.overlay.surface_width = self.config.width as f32;
+        self.overlay.surface_height = self.config.height as f32;
         self.queue
             .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
     }
@@ -331,6 +374,11 @@ impl WgpuRenderer {
     }
 
     pub fn upload_bgra(&mut self, width: u32, height: u32, stride: u32, bgra: &[u8]) -> Result<()> {
+        self.overlay.source_width = width.max(1) as f32;
+        self.overlay.source_height = height.max(1) as f32;
+        self.queue
+            .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
+
         if width > self.max_texture_dimension_2d || height > self.max_texture_dimension_2d {
             return Err(anyhow!(
                 "frame size {}x{} exceeds GPU texture limit {}x{}",
