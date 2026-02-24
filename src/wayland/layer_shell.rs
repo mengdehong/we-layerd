@@ -48,6 +48,7 @@ struct OutputSurface {
     last_refind_attempt: Option<Instant>,
     configured_once: bool,
     render_fail_streak: u64,
+    render_backoff_until: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -208,6 +209,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
 
     while state.running {
         let frame_start = Instant::now();
+        let now = Instant::now();
         let mut frame_cache: HashMap<u32, capture_xcomposite::CapturedFrame> = HashMap::new();
 
         if let Err(err) = event_queue.dispatch_pending(&mut state) {
@@ -216,9 +218,19 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
 
         for output in &mut state.outputs {
             if let Some(renderer) = &mut output.renderer {
+                if output
+                    .render_backoff_until
+                    .map(|until| now < until)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+
                 renderer.set_scale_mode(run_cfg.scale_mode);
                 renderer.set_fps_overlay(measured_fps, run_cfg.show_fps);
-                if let Some(window) = output.capture_window {
+                // If rendering is unhealthy, skip expensive capture/upload to avoid memory blow-up.
+                if output.render_fail_streak == 0 {
+                    if let Some(window) = output.capture_window {
                     if !frame_cache.contains_key(&window) {
                         if output.capturer.is_none() {
                             match capture_xcomposite::XCompositeCapturer::new(window) {
@@ -275,15 +287,19 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
                             warn!(error = %err, output = %output.name, "failed to upload frame");
                         }
                     }
+                    }
                 }
 
                 if let Err(err) = renderer.render() {
                     output.render_fail_streak += 1;
+                    let backoff_ms = (output.render_fail_streak.saturating_mul(10)).min(500);
+                    output.render_backoff_until = Some(Instant::now() + Duration::from_millis(backoff_ms));
                     if output.render_fail_streak <= 5 || output.render_fail_streak % 120 == 0 {
                         warn!(
                             error = %err,
                             output = %output.name,
                             streak = output.render_fail_streak,
+                            backoff_ms,
                             configured_once = output.configured_once,
                             "render failed for output"
                         );
@@ -295,6 +311,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
                         "render path recovered"
                     );
                     output.render_fail_streak = 0;
+                    output.render_backoff_until = None;
                 }
             }
         }
@@ -385,6 +402,7 @@ fn create_output_surface(
         last_refind_attempt: None,
         configured_once: false,
         render_fail_streak: 0,
+        render_backoff_until: None,
     });
 
     Ok(())
