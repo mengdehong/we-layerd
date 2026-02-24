@@ -56,7 +56,8 @@ impl WineProcessHandle {
                         Ok(Some(status)) => {
                             warn!(?status, "wine process exited");
                             *guard = None;
-                            if restart_on_exit {
+                            let should_restart = restart_on_exit && !status.success();
+                            if should_restart {
                                 match spawn_child(&config) {
                                     Ok(new_child) => {
                                         info!(pid = new_child.id(), "restarted wine process");
@@ -66,6 +67,8 @@ impl WineProcessHandle {
                                         warn!(error = %err, "failed to restart wine process");
                                     }
                                 }
+                            } else if status.success() {
+                                info!("wine process exited successfully; skip auto-restart");
                             }
                         }
                         Ok(None) => {}
