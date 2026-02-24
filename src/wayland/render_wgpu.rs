@@ -121,11 +121,20 @@ fn seg_on(d: i32, s: i32) -> bool {
     if (d < 0 || d > 9 || s < 0 || s > 6) {
         return false;
     }
-    let masks = array<u32, 10>(
-        0x3Fu, 0x06u, 0x5Bu, 0x4Fu, 0x66u,
-        0x6Du, 0x7Du, 0x07u, 0x7Fu, 0x6Fu
-    );
-    let mask = masks[u32(d)];
+    var mask = 0u;
+    switch d {
+        case 0: { mask = 0x3Fu; }
+        case 1: { mask = 0x06u; }
+        case 2: { mask = 0x5Bu; }
+        case 3: { mask = 0x4Fu; }
+        case 4: { mask = 0x66u; }
+        case 5: { mask = 0x6Du; }
+        case 6: { mask = 0x7Du; }
+        case 7: { mask = 0x07u; }
+        case 8: { mask = 0x7Fu; }
+        case 9: { mask = 0x6Fu; }
+        default: { return false; }
+    }
     return ((mask >> u32(s)) & 1u) == 1u;
 }
 
