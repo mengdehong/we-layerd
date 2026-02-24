@@ -31,7 +31,9 @@ cp config.example.toml config.toml
 ```
 
 Minimal required fields:
-- `wine.wallpaper_exe`
+- `wine`
+- `steam` and `wallpaper64.exe` usually in `~/.local/share/Steam/steamapps/common/wallpaper_engine/wallpaper64.exe`.
+- wallpapaers, usually in `~/.local/share/Steam/steamapps/workshop/content/`, please verify your path.
 - Optionally tune `capture` match rules.
 
 Print effective config defaults:

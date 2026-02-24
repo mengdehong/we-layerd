@@ -10,7 +10,7 @@ command = "wine"
 wallpaper_exe = "/home/aromatic/.local/share/Steam/steamapps/common/wallpaper_engine/wallpaper64.exe"
 args = [
   "-control", "openWallpaper",
-  "-file", "/home/aromatic/.local/share/Steam/steamapps/workshop/content/431960/3351163962/project.json",
+  "-file", "/home/aromatic/.local/share/Steam/steamapps/workshop/content/431960/3299228616/project.json",
   "-playInWindow", "WE-DEBUG-WINDOW",
   "-width", "2560",
   "-height", "1600",
