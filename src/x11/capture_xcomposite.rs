@@ -15,35 +15,59 @@ use x11rb::{
 pub struct CapturedFrame {
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
+    pub bgra: Vec<u8>,
+}
+
+pub struct XCompositeCapturer {
+    conn: RustConnection,
+    window: Window,
+}
+
+impl XCompositeCapturer {
+    pub fn new(window: Window) -> Result<Self> {
+        let (conn, _) = RustConnection::connect(None).context("failed to connect to X11 display")?;
+        let _ = conn
+            .composite_query_version(0, 4)
+            .context("failed to query XComposite extension")?
+            .reply()
+            .context("failed to receive XComposite version reply")?;
+
+        let _ = conn
+            .composite_redirect_window(window, composite::Redirect::AUTOMATIC)
+            .context("failed to redirect window for XComposite")?;
+
+        conn.flush().context("failed to flush X11 requests")?;
+
+        Ok(Self { conn, window })
+    }
+
+    pub fn capture_frame(&mut self) -> Result<CapturedFrame> {
+        let pixmap = self
+            .conn
+            .generate_id()
+            .context("failed to generate X11 pixmap id")?;
+        self.conn
+            .composite_name_window_pixmap(self.window, pixmap)
+            .context("failed to name XComposite window pixmap")?;
+
+        let frame = capture_pixmap_bgra(&self.conn, pixmap)
+            .with_context(|| format!("failed to capture pixmap for window {}", self.window))
+            ?;
+
+        let _ = self.conn.free_pixmap(pixmap);
+        let _ = self.conn.flush();
+        Ok(frame)
+    }
+}
+
+impl Drop for XCompositeCapturer {
+    fn drop(&mut self) {
+        let _ = self.conn.flush();
+    }
 }
 
 pub fn capture_single_frame(window: Window) -> Result<CapturedFrame> {
-    let (conn, _) = RustConnection::connect(None).context("failed to connect to X11 display")?;
-
-    let _ = conn
-        .composite_query_version(0, 4)
-        .context("failed to query XComposite extension")?
-        .reply()
-        .context("failed to receive XComposite version reply")?;
-
-    let _ = conn
-        .composite_redirect_window(window, composite::Redirect::AUTOMATIC)
-        .context("failed to redirect window for XComposite")?;
-
-    let pixmap = conn
-        .generate_id()
-        .context("failed to generate X11 pixmap id")?;
-    conn.composite_name_window_pixmap(window, pixmap)
-        .context("failed to name XComposite window pixmap")?;
-
-    let frame = capture_pixmap_bgra(&conn, pixmap)
-        .with_context(|| format!("failed to capture pixmap for window {}", window));
-
-    let _ = conn.free_pixmap(pixmap);
-    let _ = conn.flush();
-
-    frame
+    XCompositeCapturer::new(window)?.capture_frame()
 }
 
 pub fn probe_xcomposite_support() -> Result<()> {
@@ -87,29 +111,36 @@ fn capture_pixmap_bgra(conn: &RustConnection, pixmap: Pixmap) -> Result<Captured
         ));
     }
 
-    let mut rgba = vec![0u8; expected];
-    for (src, dst) in image
-        .data
-        .chunks_exact(4)
-        .zip(rgba.chunks_exact_mut(4))
-        .take(width as usize * height as usize)
-    {
-        // X11 on little-endian desktops is usually BGRA8888.
-        dst[0] = src[2];
-        dst[1] = src[1];
-        dst[2] = src[0];
-        dst[3] = 0xFF;
-    }
+    let bgra = if image.data.len() == expected {
+        image.data
+    } else {
+        // Some X11 servers pad each row; repack to tightly packed BGRA.
+        let row_stride = image.data.len() / height as usize;
+        let mut packed = vec![0u8; expected];
+        for row in 0..height as usize {
+            let src_start = row * row_stride;
+            let dst_start = row * width as usize * 4;
+            let src_end = src_start + width as usize * 4;
+            let dst_end = dst_start + width as usize * 4;
+            packed[dst_start..dst_end].copy_from_slice(&image.data[src_start..src_end]);
+        }
+        packed
+    };
 
     Ok(CapturedFrame {
         width: width as u32,
         height: height as u32,
-        rgba,
+        bgra,
     })
 }
 
 pub fn save_frame_png(frame: &CapturedFrame, path: &Path) -> Result<()> {
-    let image: RgbaImage = ImageBuffer::from_vec(frame.width, frame.height, frame.rgba.clone())
+    let mut rgba = frame.bgra.clone();
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+
+    let image: RgbaImage = ImageBuffer::from_vec(frame.width, frame.height, rgba)
         .ok_or_else(|| anyhow!("invalid frame dimensions for PNG output"))?;
     image
         .save(path)

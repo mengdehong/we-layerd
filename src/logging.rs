@@ -1,6 +1,8 @@
 use tracing_subscriber::{fmt, EnvFilter};
 
 pub fn init() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("we_layerd=info,wgpu=warn,wgpu_hal=warn,wgpu_core=warn,naga=warn")
+    });
     fmt().with_env_filter(filter).with_target(true).init();
 }

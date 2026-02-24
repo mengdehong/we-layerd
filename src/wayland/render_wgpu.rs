@@ -201,7 +201,7 @@ impl WgpuRenderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn upload_rgba(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
+    pub fn upload_bgra(&mut self, width: u32, height: u32, bgra: &[u8]) -> Result<()> {
         if width > self.max_texture_dimension_2d || height > self.max_texture_dimension_2d {
             return Err(anyhow!(
                 "frame size {}x{} exceeds GPU texture limit {}x{}",
@@ -213,17 +213,17 @@ impl WgpuRenderer {
         }
 
         let expected = width as usize * height as usize * 4;
-        if rgba.len() < expected {
+        if bgra.len() < expected {
             return Err(anyhow!(
                 "invalid frame payload: got {}, expected at least {}",
-                rgba.len(),
+                bgra.len(),
                 expected
             ));
         }
 
         if self.texture_size != (width, height) {
             let (texture, bind_group) =
-                create_texture_resources(&self.device, &self.queue, &self.bind_group_layout, width, height, rgba);
+                create_texture_resources(&self.device, &self.queue, &self.bind_group_layout, width, height, bgra);
             self.texture = texture;
             self.bind_group = bind_group;
             self.texture_size = (width, height);
@@ -237,7 +237,7 @@ impl WgpuRenderer {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &rgba[..expected],
+            &bgra[..expected],
             wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(width * 4),
@@ -300,7 +300,7 @@ fn create_texture_resources(
     bind_group_layout: &wgpu::BindGroupLayout,
     width: u32,
     height: u32,
-    rgba: &[u8],
+    bgra: &[u8],
 ) -> (wgpu::Texture, wgpu::BindGroup) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("we-layerd-frame-texture"),
@@ -312,7 +312,7 @@ fn create_texture_resources(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format: wgpu::TextureFormat::Bgra8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -324,7 +324,7 @@ fn create_texture_resources(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        rgba,
+        bgra,
         wgpu::ImageDataLayout {
             offset: 0,
             bytes_per_row: Some(width * 4),

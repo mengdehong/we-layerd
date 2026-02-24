@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, time::{Duration, Instant}};
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use tracing::{error, info, warn};
@@ -38,6 +41,7 @@ struct OutputSurface {
     surface: WlSurface,
     renderer: Option<WgpuRenderer>,
     capture_window: Option<u32>,
+    capturer: Option<capture_xcomposite::XCompositeCapturer>,
     last_refind_attempt: Option<Instant>,
 }
 
@@ -177,6 +181,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
 
     while state.running {
         let start = Instant::now();
+        let mut frame_cache: HashMap<u32, capture_xcomposite::CapturedFrame> = HashMap::new();
 
         if let Err(err) = event_queue.dispatch_pending(&mut state) {
             error!(error = %err, "wayland event dispatch failed");
@@ -185,35 +190,55 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
         for output in &mut state.outputs {
             if let Some(renderer) = &mut output.renderer {
                 if let Some(window) = output.capture_window {
-                    match capture_xcomposite::capture_single_frame(window) {
-                        Ok(frame) => {
-                            if let Err(err) = renderer.upload_rgba(frame.width, frame.height, &frame.rgba) {
-                                warn!(error = %err, output = %output.name, "failed to upload frame");
+                    if !frame_cache.contains_key(&window) {
+                        if output.capturer.is_none() {
+                            match capture_xcomposite::XCompositeCapturer::new(window) {
+                                Ok(capturer) => output.capturer = Some(capturer),
+                                Err(err) => {
+                                    warn!(error = %err, output = %output.name, window, "failed to initialize capturer");
+                                }
                             }
                         }
-                        Err(err) => {
-                            warn!(error = %err, output = %output.name, window, "capture failed for output");
-                            if run_cfg.auto_refind_window {
-                                let now = Instant::now();
-                                let can_refind = output
-                                    .last_refind_attempt
-                                    .map(|t| now.duration_since(t) >= Duration::from_secs(2))
-                                    .unwrap_or(true);
-                                if !can_refind {
-                                    continue;
-                                }
-                                output.last_refind_attempt = Some(now);
 
-                                if let Ok(Some(found)) = window_finder::find_window_for_process(
-                                    &run_cfg.capture_match,
-                                    run_cfg.wine_pid,
-                                ) {
-                                    if output.capture_window != Some(found.window) {
-                                        output.capture_window = Some(found.window);
-                                        info!(output = %output.name, window = found.window, "rebound output to rediscovered X11 window");
+                        if let Some(capturer) = output.capturer.as_mut() {
+                            match capturer.capture_frame() {
+                                Ok(frame) => {
+                                    frame_cache.insert(window, frame);
+                                }
+                                Err(err) => {
+                                    warn!(error = %err, output = %output.name, window, "capture failed for output");
+                                    output.capturer = None;
+
+                                    if run_cfg.auto_refind_window {
+                                        let now = Instant::now();
+                                        let can_refind = output
+                                            .last_refind_attempt
+                                            .map(|t| now.duration_since(t) >= Duration::from_secs(2))
+                                            .unwrap_or(true);
+                                        if !can_refind {
+                                            continue;
+                                        }
+                                        output.last_refind_attempt = Some(now);
+
+                                        if let Ok(Some(found)) = window_finder::find_window_for_process(
+                                            &run_cfg.capture_match,
+                                            run_cfg.wine_pid,
+                                        ) {
+                                            if output.capture_window != Some(found.window) {
+                                                output.capture_window = Some(found.window);
+                                                output.capturer = None;
+                                                info!(output = %output.name, window = found.window, "rebound output to rediscovered X11 window");
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    if let Some(frame) = frame_cache.get(&window) {
+                        if let Err(err) = renderer.upload_bgra(frame.width, frame.height, &frame.bgra) {
+                            warn!(error = %err, output = %output.name, "failed to upload frame");
                         }
                     }
                 }
@@ -290,6 +315,7 @@ fn create_output_surface(
         surface,
         renderer,
         capture_window,
+        capturer: None,
         last_refind_attempt: None,
     });
 
