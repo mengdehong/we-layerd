@@ -1,22 +1,25 @@
 use std::{
-    env, fmt,
-    path::PathBuf,
+    env,
+    path::{Path, PathBuf},
     process::{Child, Command},
 };
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{
-        button, checkbox, column, container, image, pick_list, row, scrollable, stack, svg, text,
-        text_input,
-    },
+    widget::{button, column, container, image, row, scrollable, stack, svg, text},
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
+};
+use settings_panel::{
+    build_settings_overlay, detect_supported_resolutions, pick_initial_resolution,
+    ResolutionOption, UiSettings,
 };
 use we_core::{
     config::{build_config, save_config, LaunchSettings},
     steam::{self, WallpaperEngineInstallState},
     wallpaper::{self, WallpaperEntry, WallpaperType},
 };
+
+mod settings_panel;
 
 fn main() -> iced::Result {
     iced::application("we-gui", update, view).subscription(subscription).run_with(App::init)
@@ -46,35 +49,16 @@ enum Message {
     PlayPressed,
     StopPressed,
     SettingsPressed,
+    WallpaperExeChanged(String),
+    WorkshopPathChanged(String),
     PickWallpaperExe,
     PickWorkshopPath,
     WallpaperExePicked(Option<PathBuf>),
     WorkshopPathPicked(Option<PathBuf>),
     FpsLimitChanged(String),
     ShowFpsToggled(bool),
-    ResolutionSelected(ResolutionOption),
+    ResolutionSelected(settings_panel::ResolutionOption),
     WindowResized(Size),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ResolutionOption {
-    width: u32,
-    height: u32,
-}
-
-impl fmt::Display for ResolutionOption {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} x {}", self.width, self.height)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct UiSettings {
-    wallpaper_exe: String,
-    workshop_path: String,
-    fps_limit: String,
-    show_fps: bool,
-    selected_resolution: Option<ResolutionOption>,
 }
 
 fn update(app: &mut App, message: Message) -> Task<Message> {
@@ -144,6 +128,21 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.show_settings = !app.show_settings;
             Task::none()
         }
+        Message::WallpaperExeChanged(value) => {
+            app.ui_settings.wallpaper_exe = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::WorkshopPathChanged(value) => {
+            app.ui_settings.workshop_path = value.clone();
+            if Path::new(&value).is_dir() {
+                return Task::perform(
+                    scan_wallpapers_from(app.ui_settings.workshop_path.clone()),
+                    Message::Scanned,
+                );
+            }
+            Task::none()
+        }
         Message::PickWallpaperExe => Task::perform(
             async { rfd::FileDialog::new().set_title("Select wallpaper64.exe").pick_file() },
             Message::WallpaperExePicked,
@@ -164,6 +163,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::WorkshopPathPicked(path) => {
             if let Some(path) = path {
                 app.ui_settings.workshop_path = path.display().to_string();
+                sync_launch_settings(app);
                 return Task::perform(
                     scan_wallpapers_from(app.ui_settings.workshop_path.clone()),
                     Message::Scanned,
@@ -261,8 +261,11 @@ fn view(app: &App) -> Element<'_, Message> {
         Some(warning.into())
     };
 
-    let settings_overlay: Option<Element<'_, Message>> =
-        if app.show_settings { Some(build_settings_overlay(app)) } else { None };
+    let settings_overlay: Option<Element<'_, Message>> = if app.show_settings {
+        Some(build_settings_overlay(&app.ui_settings, &app.supported_resolutions))
+    } else {
+        None
+    };
 
     match (runtime_warning, settings_overlay) {
         (Some(w), Some(s)) => stack![content, w, s, floating].into(),
@@ -449,60 +452,6 @@ fn make_wallpaper_card<'a>(
     button(frame).on_press(Message::SelectWallpaper(index)).style(image_card_button_style).into()
 }
 
-fn build_settings_overlay(app: &App) -> Element<'_, Message> {
-    let wallpaper_path_display = format_path_for_display(&app.ui_settings.wallpaper_exe, 56);
-    let workshop_path_display = format_path_for_display(&app.ui_settings.workshop_path, 56);
-
-    let card = container(
-        column![
-            text("Settings").size(26).color(Color::from_rgb8(150, 205, 255)),
-            setting_path_row(
-                "Wallpaper Engine Path",
-                wallpaper_path_display,
-                Message::PickWallpaperExe
-            ),
-            setting_path_row("Workshop Path", workshop_path_display, Message::PickWorkshopPath),
-            text_input("FPS Limit", &app.ui_settings.fps_limit)
-                .on_input(Message::FpsLimitChanged)
-                .padding(10),
-            checkbox("Show realtime FPS", app.ui_settings.show_fps)
-                .on_toggle(Message::ShowFpsToggled),
-            pick_list(
-                app.supported_resolutions.clone(),
-                app.ui_settings.selected_resolution.clone(),
-                Message::ResolutionSelected,
-            )
-            .placeholder("Resolution")
-            .padding(10),
-        ]
-        .spacing(12),
-    )
-    .width(640)
-    .padding(16)
-    .style(|_theme: &Theme| container::Style {
-        text_color: Some(Color::WHITE),
-        background: Some(Background::Color(Color::from_rgba(0.08, 0.08, 0.10, 0.95))),
-        border: Border {
-            radius: 16.0.into(),
-            width: 1.0,
-            color: Color::from_rgba(1.0, 1.0, 1.0, 0.12),
-        },
-        shadow: iced::Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.40),
-            blur_radius: 20.0,
-            offset: iced::Vector::new(0.0, 6.0),
-        },
-    });
-
-    container(card)
-        .width(Fill)
-        .height(Fill)
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Center)
-        .padding(20)
-        .into()
-}
-
 fn sync_launch_settings(app: &mut App) {
     app.launch_settings.wallpaper_exe = app.ui_settings.wallpaper_exe.clone();
     app.launch_settings.show_fps = app.ui_settings.show_fps;
@@ -518,110 +467,6 @@ fn sync_launch_settings(app: &mut App) {
         app.launch_settings.width = res.width;
         app.launch_settings.height = res.height;
     }
-}
-
-fn setting_path_row<'a>(label: &'a str, value: String, on_press: Message) -> Element<'a, Message> {
-    row![
-        container(text(label).size(14)).width(170),
-        container(text(value).size(14).color(Color::from_rgb8(220, 228, 236)))
-            .width(Fill)
-            .padding([10, 12])
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgba(0.12, 0.12, 0.15, 0.9))),
-                border: Border {
-                    radius: 10.0.into(),
-                    width: 1.0,
-                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.12),
-                },
-                ..Default::default()
-            }),
-        button(text("Browse").size(13)).padding([10, 14]).on_press(on_press),
-    ]
-    .align_y(Vertical::Center)
-    .spacing(10)
-    .into()
-}
-
-fn detect_supported_resolutions() -> Vec<ResolutionOption> {
-    let mut values = parse_xrandr_resolutions();
-    if values.is_empty() {
-        values = parse_wlrandr_resolutions();
-    }
-    if values.is_empty() {
-        values.push(ResolutionOption { width: 1920, height: 1080 });
-    }
-    values.sort_by_key(|v| (v.width, v.height));
-    values.dedup();
-    values
-}
-
-fn parse_xrandr_resolutions() -> Vec<ResolutionOption> {
-    let Ok(output) = Command::new("xrandr").arg("--query").output() else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    parse_resolutions_from_text(String::from_utf8_lossy(&output.stdout).as_ref())
-}
-
-fn parse_wlrandr_resolutions() -> Vec<ResolutionOption> {
-    let Ok(output) = Command::new("wlr-randr").output() else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    parse_resolutions_from_text(String::from_utf8_lossy(&output.stdout).as_ref())
-}
-
-fn parse_resolutions_from_text(raw: &str) -> Vec<ResolutionOption> {
-    let mut result = Vec::new();
-    for line in raw.lines() {
-        let line = line.trim();
-        for token in line.split_whitespace() {
-            let Some((w, h)) = token.split_once('x') else {
-                continue;
-            };
-            if let (Ok(width), Ok(height)) = (w.parse::<u32>(), h.parse::<u32>()) {
-                if width >= 640 && height >= 360 {
-                    result.push(ResolutionOption { width, height });
-                }
-            }
-        }
-    }
-    result
-}
-
-fn pick_initial_resolution(
-    supported: &[ResolutionOption],
-    width: u32,
-    height: u32,
-) -> Option<ResolutionOption> {
-    if let Some(found) = supported.iter().find(|r| r.width == width && r.height == height).cloned()
-    {
-        return Some(found);
-    }
-    supported.last().cloned()
-}
-
-fn format_path_for_display(path: &str, max_chars: usize) -> String {
-    let mut rendered = path.to_string();
-    if let Ok(home) = env::var("HOME") {
-        if rendered.starts_with(&home) {
-            rendered = rendered.replacen(&home, "~", 1);
-        }
-    }
-    if rendered.chars().count() <= max_chars {
-        return rendered;
-    }
-
-    let keep_head = max_chars.saturating_sub(3) / 2;
-    let keep_tail = max_chars.saturating_sub(3) - keep_head;
-    let head: String = rendered.chars().take(keep_head).collect();
-    let tail: String =
-        rendered.chars().rev().take(keep_tail).collect::<String>().chars().rev().collect();
-    format!("{head}...{tail}")
 }
 
 fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
