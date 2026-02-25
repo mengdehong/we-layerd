@@ -1,4 +1,5 @@
 use std::{
+    env,
     fs,
     path::{Path, PathBuf},
     process::{Child, Command},
@@ -6,7 +7,7 @@ use std::{
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{button, column, container, image, row, scrollable, stack, text},
+    widget::{button, column, container, image, row, scrollable, stack, svg, text},
     window, Background, Border, Color, Element, Fill, Size, Subscription, Task, Theme,
 };
 use we_core::{
@@ -26,6 +27,7 @@ struct App {
     config_path: PathBuf,
     layerd_child: Option<Child>,
     viewport_width: f32,
+    layerd_available: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +62,10 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::PlayPressed => {
+            if !app.layerd_available {
+                return Task::none();
+            }
+
             if let Some(child) = app.layerd_child.as_mut() {
                 if let Ok(Some(_)) = child.try_wait() {
                     app.layerd_child = None;
@@ -101,11 +107,27 @@ fn view(app: &App) -> Element<'_, Message> {
 
     let floating = container(
         column![
-            button(text("⚙").size(24))
-                .style(material_icon_button_style)
+            button(
+                svg(svg::Handle::from_memory(include_bytes!(
+                    "../assets/icons/settings.svg"
+                )))
+                .width(24)
+                .height(24),
+            )
+                .width(52)
+                .height(52)
+                .style(secondary_fab_style)
                 .on_press(Message::SettingsPressed),
-            button(text("▶").size(26))
-                .style(material_icon_button_style)
+            button(
+                svg(svg::Handle::from_memory(include_bytes!(
+                    "../assets/icons/play_arrow.svg"
+                )))
+                .width(28)
+                .height(28),
+            )
+                .width(60)
+                .height(60)
+                .style(primary_fab_style)
                 .on_press(Message::PlayPressed),
         ]
         .spacing(12),
@@ -116,7 +138,22 @@ fn view(app: &App) -> Element<'_, Message> {
     .align_y(Vertical::Bottom)
     .padding(20);
 
-    stack![content, floating].into()
+    if app.layerd_available {
+        stack![content, floating].into()
+    } else {
+        let warning = container(
+            text("we-layerd not found in PATH")
+                .size(30)
+                .color(Color::from_rgb8(150, 205, 255)),
+        )
+        .width(Fill)
+        .height(Fill)
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Top)
+        .padding(24);
+
+        stack![content, warning, floating].into()
+    }
 }
 
 async fn scan_wallpapers() -> Result<Vec<WallpaperEntry>, String> {
@@ -148,6 +185,7 @@ impl App {
                 config_path,
                 layerd_child: None,
                 viewport_width: 1280.0,
+                layerd_available: command_exists_in_path("we-layerd"),
             },
             Task::done(Message::AutoScan),
         )
@@ -317,11 +355,68 @@ fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::S
     }
 }
 
-fn material_icon_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
+fn primary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let (r, g, b) = match status {
+        button::Status::Hovered => (0.13, 0.56, 0.96),
+        button::Status::Pressed => (0.09, 0.48, 0.88),
+        _ => (0.11, 0.53, 0.93),
+    };
+
     button::Style {
-        background: None,
+        background: Some(Background::Color(Color::from_rgb(r, g, b))),
         text_color: Color::WHITE,
-        border: Border::default(),
-        shadow: iced::Shadow::default(),
+        border: Border {
+            radius: 30.0.into(),
+            ..Default::default()
+        },
+        shadow: iced::Shadow {
+            color: Color {
+                a: 0.35,
+                ..Color::BLACK
+            },
+            blur_radius: 12.0,
+            offset: iced::Vector::new(0.0, 4.0),
+        },
     }
+}
+
+fn secondary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => Color::from_rgba(0.14, 0.14, 0.14, 0.82),
+        button::Status::Pressed => Color::from_rgba(0.10, 0.10, 0.10, 0.88),
+        _ => Color::from_rgba(0.12, 0.12, 0.12, 0.78),
+    };
+
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: Color::WHITE,
+        border: Border {
+            radius: 26.0.into(),
+            width: 1.0,
+            color: Color::from_rgba(1.0, 1.0, 1.0, 0.14),
+        },
+        shadow: iced::Shadow {
+            color: Color {
+                a: 0.28,
+                ..Color::BLACK
+            },
+            blur_radius: 10.0,
+            offset: iced::Vector::new(0.0, 3.0),
+        },
+    }
+}
+
+fn command_exists_in_path(name: &str) -> bool {
+    let Some(path_os) = env::var_os("PATH") else {
+        return false;
+    };
+
+    for dir in env::split_paths(&path_os) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return true;
+        }
+    }
+
+    false
 }
