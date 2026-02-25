@@ -62,7 +62,9 @@ pub fn build_settings_overlay<'a>(
             text(workshop_path_display).size(12),
             text("Frame Rate Limit (FPS)").size(14),
             text_input("30", &ui_settings.fps_limit).on_input(Message::FpsLimitChanged).padding(10),
-            checkbox("Show realtime FPS", ui_settings.show_fps).on_toggle(Message::ShowFpsToggled),
+            checkbox(ui_settings.show_fps)
+                .label("Show realtime FPS")
+                .on_toggle(Message::ShowFpsToggled),
             text("Resolution").size(14),
             pick_list(
                 supported_resolutions.to_vec(),

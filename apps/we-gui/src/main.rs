@@ -1,7 +1,7 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    process::{Child, Command},
+    process::{Child, Command, Stdio},
     time::Duration,
 };
 
@@ -24,11 +24,11 @@ mod settings_panel;
 mod tray;
 
 fn main() -> iced::Result {
-    iced::application("we-gui", update, view)
-        .theme(|app: &App| app.theme.clone())
+    iced::daemon(App::init, update, view)
+        .title("we-gui")
+        .theme(|app: &App, _window| app.theme.clone())
         .subscription(subscription)
-        .exit_on_close_request(false)
-        .run_with(App::init)
+        .run()
 }
 
 struct App {
@@ -70,6 +70,7 @@ enum Message {
     WindowResized(Size),
     WindowCloseRequested(window::Id),
     WindowOpened(window::Id),
+    WindowClosed(window::Id),
     TrayTick,
     ThemeTick,
     TrayAction(tray::TrayAction),
@@ -195,9 +196,15 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.viewport_width = size.width;
             Task::none()
         }
-        Message::WindowCloseRequested(id) => window::change_mode(id, window::Mode::Hidden),
+        Message::WindowCloseRequested(id) => window::close(id),
         Message::WindowOpened(id) => {
             app.main_window_id = Some(id);
+            Task::none()
+        }
+        Message::WindowClosed(id) => {
+            if app.main_window_id == Some(id) {
+                app.main_window_id = None;
+            }
             Task::none()
         }
         Message::TrayTick => {
@@ -215,11 +222,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::TrayAction(action) => match action {
             tray::TrayAction::ShowWindow => {
                 if let Some(id) = app.main_window_id {
-                    return Task::batch(vec![
-                        window::change_mode(id, window::Mode::Windowed),
-                        window::minimize(id, false),
-                        window::gain_focus(id),
-                    ]);
+                    return window::gain_focus(id);
                 }
                 let (_id, task) = window::open(window::Settings::default());
                 task.map(Message::WindowOpened)
@@ -236,13 +239,13 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             tray::TrayAction::Quit => {
                 let _ = stop_runtime(app);
-                std::process::exit(0);
+                iced::exit()
             }
         },
     }
 }
 
-fn view(app: &App) -> Element<'_, Message> {
+fn view(app: &App, _window: window::Id) -> Element<'_, Message> {
     let grid = build_wallpaper_grid(&app.entries, app.selected_id.as_ref(), app.viewport_width);
 
     let content = container(scrollable(grid).width(Fill).height(Fill)).width(Fill).height(Fill);
@@ -347,6 +350,7 @@ fn subscription(_app: &App) -> Subscription<Message> {
     Subscription::batch(vec![
         window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
         window::open_events().map(Message::WindowOpened),
+        window::close_events().map(Message::WindowClosed),
         window::close_requests().map(Message::WindowCloseRequested),
         iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::TrayTick),
         iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::ThemeTick),
@@ -408,7 +412,10 @@ impl App {
                 main_window_id: None,
                 theme: detect_system_theme(),
             },
-            Task::done(Message::AutoScan),
+            Task::batch(vec![
+                Task::done(Message::AutoScan),
+                window::open(window::Settings::default()).1.map(Message::WindowOpened),
+            ]),
         )
     }
 }
@@ -428,10 +435,10 @@ fn build_wallpaper_grid<'a>(
     let card_width = 360.0;
     let cols = ((width - spacing) / (card_width + spacing)).floor().max(1.0) as usize;
 
-    let mut root = column!().spacing(spacing as u16).padding(spacing as u16);
+    let mut root = column!().spacing(spacing).padding(spacing);
 
     for (row_index, chunk) in entries.chunks(cols).enumerate() {
-        let mut r = row!().spacing(spacing as u16);
+        let mut r = row!().spacing(spacing);
         for (inner, entry) in chunk.iter().enumerate() {
             let index = row_index * cols + inner;
             let is_selected = selected_id.map(|id| id == &entry.id).unwrap_or(false);
@@ -539,6 +546,7 @@ fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::S
         text_color: Color::WHITE,
         border: Border::default(),
         shadow: iced::Shadow::default(),
+        ..Default::default()
     }
 }
 
@@ -562,6 +570,7 @@ fn primary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
             blur_radius: 12.0,
             offset: iced::Vector::new(0.0, 4.0),
         },
+        ..Default::default()
     }
 }
 
@@ -589,6 +598,7 @@ fn secondary_fab_style(_theme: &Theme, status: button::Status) -> button::Style 
             blur_radius: 10.0,
             offset: iced::Vector::new(0.0, 3.0),
         },
+        ..Default::default()
     }
 }
 
@@ -616,23 +626,104 @@ fn command_exists_in_path(name: &str) -> bool {
 }
 
 fn stop_runtime(app: &mut App) -> bool {
+    let stopped_by_ipc = send_layerd_ctl("stop");
+    let mut stopped_any = stopped_by_ipc;
+
     if let Some(mut child) = app.runtime_child.take() {
-        let _ = send_layerd_ctl("stop");
-        for _ in 0..30 {
-            match child.try_wait() {
-                Ok(Some(_)) => return true,
-                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-                Err(_) => break,
+        if wait_child_exit(&mut child, 40, 100) {
+            stopped_any = true;
+        } else {
+            let _ = send_process_signal(child.id(), "INT");
+            if wait_child_exit(&mut child, 30, 100) {
+                stopped_any = true;
+            } else {
+                let _ = send_process_signal(child.id(), "TERM");
+                if wait_child_exit(&mut child, 20, 100) {
+                    stopped_any = true;
+                } else {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    stopped_any = true;
+                }
             }
         }
-        let _ = child.kill();
-        let _ = child.wait();
-        return true;
     }
-    let _ = send_layerd_ctl("stop");
-    false
+
+    if cleanup_runtime_residue(&app.launch_settings.wallpaper_exe) {
+        stopped_any = true;
+    }
+
+    stopped_any
 }
 
 fn send_layerd_ctl(action: &str) -> bool {
-    Command::new("we-layerd").arg("ctl").arg(action).status().map(|s| s.success()).unwrap_or(false)
+    Command::new("we-layerd")
+        .arg("ctl")
+        .arg(action)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn wait_child_exit(child: &mut Child, attempts: usize, sleep_ms: u64) -> bool {
+    for _ in 0..attempts {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => std::thread::sleep(Duration::from_millis(sleep_ms)),
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+fn send_process_signal(pid: u32, signal: &str) -> bool {
+    Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(pid.to_string())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn cleanup_runtime_residue(wallpaper_exe: &str) -> bool {
+    let mut any = false;
+    let mut patterns = vec![
+        "we-layerd run".to_string(),
+        "wallpaper64.exe".to_string(),
+        "wallpaper32.exe".to_string(),
+        "explorer.exe".to_string(),
+        "ui32.exe".to_string(),
+    ];
+    if !wallpaper_exe.trim().is_empty() {
+        patterns.push(wallpaper_exe.to_string());
+    }
+
+    for pattern in &patterns {
+        any |= pkill_for_user("TERM", pattern);
+    }
+    std::thread::sleep(Duration::from_millis(120));
+    for pattern in &patterns {
+        any |= pkill_for_user("KILL", pattern);
+    }
+    any
+}
+
+#[cfg(target_os = "linux")]
+fn pkill_for_user(signal: &str, pattern: &str) -> bool {
+    let user = env::var("USER").unwrap_or_default();
+    let mut cmd = Command::new("pkill");
+    cmd.arg(format!("-{signal}"));
+    if !user.is_empty() {
+        cmd.args(["-u", &user]);
+    }
+    cmd.args(["-f", pattern]).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.status().map(|s| s.success()).unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn cleanup_runtime_residue(_wallpaper_exe: &str) -> bool {
+    false
 }
