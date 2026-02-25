@@ -14,6 +14,13 @@ const STEAM_WORKSHOP_PATHS: &[&str] = &[
 
 pub const WALLPAPER_ENGINE_APP_ID: u32 = 431960;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WallpaperEngineInstallState {
+    NotInstalled,
+    FirstRunRequired { app_dir: PathBuf },
+    Installed { app_dir: PathBuf, exe_path: PathBuf },
+}
+
 pub fn discover_wallpaper_engine_exe() -> Option<PathBuf> {
     let names = ["wallpaper64.exe", "wallpaper32.exe"];
     for root in steam_common_roots() {
@@ -28,11 +35,46 @@ pub fn discover_wallpaper_engine_exe() -> Option<PathBuf> {
     None
 }
 
+pub fn detect_wallpaper_engine_install_state() -> WallpaperEngineInstallState {
+    for root in steam_common_roots() {
+        let app_dir = root.join("wallpaper_engine");
+        if !app_dir.is_dir() {
+            continue;
+        }
+
+        let exe64 = app_dir.join("wallpaper64.exe");
+        if exe64.is_file() {
+            return WallpaperEngineInstallState::Installed { app_dir, exe_path: exe64 };
+        }
+
+        let exe32 = app_dir.join("wallpaper32.exe");
+        if exe32.is_file() {
+            return WallpaperEngineInstallState::Installed { app_dir, exe_path: exe32 };
+        }
+
+        if app_dir.join("installer.exe").is_file() {
+            return WallpaperEngineInstallState::FirstRunRequired { app_dir };
+        }
+    }
+
+    WallpaperEngineInstallState::NotInstalled
+}
+
 pub fn discover_workshop_wallpaper_root() -> Option<PathBuf> {
     for root in steam_workshop_roots() {
         let candidate = root.join(WALLPAPER_ENGINE_APP_ID.to_string());
         if candidate.is_dir() {
             return Some(candidate);
+        }
+    }
+    None
+}
+
+pub fn discover_wallpaper_engine_app_dir() -> Option<PathBuf> {
+    for root in steam_common_roots() {
+        let app_dir = root.join("wallpaper_engine");
+        if app_dir.is_dir() {
+            return Some(app_dir);
         }
     }
     None

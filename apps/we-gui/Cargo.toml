@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 iced = { version = "0.13", features = ["tokio", "image", "svg"] }
+rfd = "0.15"
 we-core = { path = "../../crates/we-core" }

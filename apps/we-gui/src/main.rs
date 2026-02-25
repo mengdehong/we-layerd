@@ -1,5 +1,5 @@
 use std::{
-    env,
+    env, fmt,
     path::PathBuf,
     process::{Child, Command},
 };
@@ -7,13 +7,14 @@ use std::{
 use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
-        button, checkbox, column, container, image, row, scrollable, stack, svg, text, text_input,
+        button, checkbox, column, container, image, pick_list, row, scrollable, stack, svg, text,
+        text_input,
     },
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
 use we_core::{
     config::{build_config, save_config, LaunchSettings},
-    steam,
+    steam::{self, WallpaperEngineInstallState},
     wallpaper::{self, WallpaperEntry, WallpaperType},
 };
 
@@ -33,6 +34,8 @@ struct App {
     launch_settings: LaunchSettings,
     ui_settings: UiSettings,
     show_settings: bool,
+    supported_resolutions: Vec<ResolutionOption>,
+    install_notice: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,17 +46,26 @@ enum Message {
     PlayPressed,
     StopPressed,
     SettingsPressed,
-    WallpaperExeChanged(String),
-    WorkshopPathChanged(String),
+    PickWallpaperExe,
+    PickWorkshopPath,
+    WallpaperExePicked(Option<PathBuf>),
+    WorkshopPathPicked(Option<PathBuf>),
     FpsLimitChanged(String),
     ShowFpsToggled(bool),
-    WidthChanged(String),
-    HeightChanged(String),
-    XChanged(String),
-    YChanged(String),
-    WindowTitleChanged(String),
-    WmClassChanged(String),
+    ResolutionSelected(ResolutionOption),
     WindowResized(Size),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolutionOption {
+    width: u32,
+    height: u32,
+}
+
+impl fmt::Display for ResolutionOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} x {}", self.width, self.height)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -62,17 +74,15 @@ struct UiSettings {
     workshop_path: String,
     fps_limit: String,
     show_fps: bool,
-    width: String,
-    height: String,
-    x: String,
-    y: String,
-    window_title: String,
-    wm_class: String,
+    selected_resolution: Option<ResolutionOption>,
 }
 
 fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
-        Message::AutoScan => Task::perform(scan_wallpapers(), Message::Scanned),
+        Message::AutoScan => Task::perform(
+            scan_wallpapers_from(app.ui_settings.workshop_path.clone()),
+            Message::Scanned,
+        ),
         Message::Scanned(result) => match result {
             Ok(entries) => {
                 app.entries = entries;
@@ -134,13 +144,31 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.show_settings = !app.show_settings;
             Task::none()
         }
-        Message::WallpaperExeChanged(value) => {
-            app.ui_settings.wallpaper_exe = value;
-            sync_launch_settings(app);
+        Message::PickWallpaperExe => Task::perform(
+            async { rfd::FileDialog::new().set_title("Select wallpaper64.exe").pick_file() },
+            Message::WallpaperExePicked,
+        ),
+        Message::PickWorkshopPath => Task::perform(
+            async {
+                rfd::FileDialog::new().set_title("Select workshop 431960 folder").pick_folder()
+            },
+            Message::WorkshopPathPicked,
+        ),
+        Message::WallpaperExePicked(path) => {
+            if let Some(path) = path {
+                app.ui_settings.wallpaper_exe = path.display().to_string();
+                sync_launch_settings(app);
+            }
             Task::none()
         }
-        Message::WorkshopPathChanged(value) => {
-            app.ui_settings.workshop_path = value;
+        Message::WorkshopPathPicked(path) => {
+            if let Some(path) = path {
+                app.ui_settings.workshop_path = path.display().to_string();
+                return Task::perform(
+                    scan_wallpapers_from(app.ui_settings.workshop_path.clone()),
+                    Message::Scanned,
+                );
+            }
             Task::none()
         }
         Message::FpsLimitChanged(value) => {
@@ -153,33 +181,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             sync_launch_settings(app);
             Task::none()
         }
-        Message::WidthChanged(value) => {
-            app.ui_settings.width = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::HeightChanged(value) => {
-            app.ui_settings.height = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::XChanged(value) => {
-            app.ui_settings.x = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::YChanged(value) => {
-            app.ui_settings.y = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::WindowTitleChanged(value) => {
-            app.ui_settings.window_title = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::WmClassChanged(value) => {
-            app.ui_settings.wm_class = value;
+        Message::ResolutionSelected(value) => {
+            app.ui_settings.selected_resolution = Some(value);
             sync_launch_settings(app);
             Task::none()
         }
@@ -233,17 +236,28 @@ fn view(app: &App) -> Element<'_, Message> {
     .align_y(Vertical::Bottom)
     .padding(20);
 
-    let runtime_warning: Option<Element<'_, Message>> = if app.layerd_available {
+    let mut notice_lines: Vec<String> = Vec::new();
+    if !app.layerd_available {
+        notice_lines.push("we-layerd not found in PATH".to_string());
+    }
+    if let Some(msg) = &app.install_notice {
+        notice_lines.push(msg.clone());
+    }
+
+    let runtime_warning: Option<Element<'_, Message>> = if notice_lines.is_empty() {
         None
     } else {
-        let warning = container(
-            text("we-layerd not found in PATH").size(30).color(Color::from_rgb8(150, 205, 255)),
-        )
-        .width(Fill)
-        .height(Fill)
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Top)
-        .padding(24);
+        let mut warning_col = column!().spacing(6);
+        for line in notice_lines {
+            warning_col =
+                warning_col.push(text(line).size(28).color(Color::from_rgb8(150, 205, 255)));
+        }
+        let warning = container(warning_col)
+            .width(Fill)
+            .height(Fill)
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Top)
+            .padding(24);
         Some(warning.into())
     };
 
@@ -258,9 +272,13 @@ fn view(app: &App) -> Element<'_, Message> {
     }
 }
 
-async fn scan_wallpapers() -> Result<Vec<WallpaperEntry>, String> {
-    let workshop_root = steam::discover_workshop_wallpaper_root()
-        .ok_or_else(|| "cannot find Steam workshop path for app 431960".to_string())?;
+async fn scan_wallpapers_from(workshop_path: String) -> Result<Vec<WallpaperEntry>, String> {
+    let workshop_root = if workshop_path.trim().is_empty() {
+        steam::discover_workshop_wallpaper_root()
+            .ok_or_else(|| "cannot find Steam workshop path for app 431960".to_string())?
+    } else {
+        PathBuf::from(workshop_path)
+    };
     wallpaper::scan_workshop_wallpapers(&workshop_root).map_err(|e| e.to_string())
 }
 
@@ -282,23 +300,36 @@ impl App {
         let config_path =
             steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
         let mut launch_settings = LaunchSettings::default();
-        if let Some(exe) = steam::discover_wallpaper_engine_exe() {
-            launch_settings.wallpaper_exe = exe.display().to_string();
-        }
+        let install_state = steam::detect_wallpaper_engine_install_state();
+        let install_notice = match &install_state {
+            WallpaperEngineInstallState::NotInstalled => Some(
+                "Wallpaper Engine is not installed. Please install it, or choose paths in Settings."
+                    .to_string(),
+            ),
+            WallpaperEngineInstallState::FirstRunRequired { .. } => Some(
+                "Wallpaper Engine first-run setup is pending. Launch it once in Steam to run installer.exe."
+                    .to_string(),
+            ),
+            WallpaperEngineInstallState::Installed { exe_path, .. } => {
+                launch_settings.wallpaper_exe = exe_path.display().to_string();
+                None
+            }
+        };
         let workshop_path = steam::discover_workshop_wallpaper_root()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
+        let supported_resolutions = detect_supported_resolutions();
+        let selected_resolution = pick_initial_resolution(
+            &supported_resolutions,
+            launch_settings.width,
+            launch_settings.height,
+        );
         let ui_settings = UiSettings {
             wallpaper_exe: launch_settings.wallpaper_exe.clone(),
             workshop_path,
             fps_limit: launch_settings.fps_limit.to_string(),
             show_fps: launch_settings.show_fps,
-            width: launch_settings.width.to_string(),
-            height: launch_settings.height.to_string(),
-            x: launch_settings.x.to_string(),
-            y: launch_settings.y.to_string(),
-            window_title: launch_settings.play_in_window_title.clone(),
-            wm_class: launch_settings.wm_class_contains.clone(),
+            selected_resolution,
         };
         (
             Self {
@@ -313,6 +344,8 @@ impl App {
                 launch_settings,
                 ui_settings,
                 show_settings: false,
+                supported_resolutions,
+                install_notice,
             },
             Task::done(Message::AutoScan),
         )
@@ -417,37 +450,30 @@ fn make_wallpaper_card<'a>(
 }
 
 fn build_settings_overlay(app: &App) -> Element<'_, Message> {
+    let wallpaper_path_display = format_path_for_display(&app.ui_settings.wallpaper_exe, 56);
+    let workshop_path_display = format_path_for_display(&app.ui_settings.workshop_path, 56);
+
     let card = container(
         column![
             text("Settings").size(26).color(Color::from_rgb8(150, 205, 255)),
-            text_input("Wallpaper Engine exe", &app.ui_settings.wallpaper_exe)
-                .on_input(Message::WallpaperExeChanged)
-                .padding(10),
-            text_input("Workshop wallpapers path", &app.ui_settings.workshop_path)
-                .on_input(Message::WorkshopPathChanged)
-                .padding(10),
+            setting_path_row(
+                "Wallpaper Engine Path",
+                wallpaper_path_display,
+                Message::PickWallpaperExe
+            ),
+            setting_path_row("Workshop Path", workshop_path_display, Message::PickWorkshopPath),
             text_input("FPS Limit", &app.ui_settings.fps_limit)
                 .on_input(Message::FpsLimitChanged)
                 .padding(10),
             checkbox("Show realtime FPS", app.ui_settings.show_fps)
                 .on_toggle(Message::ShowFpsToggled),
-            row![
-                text_input("Width", &app.ui_settings.width)
-                    .on_input(Message::WidthChanged)
-                    .padding(8),
-                text_input("Height", &app.ui_settings.height)
-                    .on_input(Message::HeightChanged)
-                    .padding(8),
-                text_input("X", &app.ui_settings.x).on_input(Message::XChanged).padding(8),
-                text_input("Y", &app.ui_settings.y).on_input(Message::YChanged).padding(8),
-            ]
-            .spacing(8),
-            text_input("Window title", &app.ui_settings.window_title)
-                .on_input(Message::WindowTitleChanged)
-                .padding(10),
-            text_input("WM class filter", &app.ui_settings.wm_class)
-                .on_input(Message::WmClassChanged)
-                .padding(10),
+            pick_list(
+                app.supported_resolutions.clone(),
+                app.ui_settings.selected_resolution.clone(),
+                Message::ResolutionSelected,
+            )
+            .placeholder("Resolution")
+            .padding(10),
         ]
         .spacing(12),
     )
@@ -480,24 +506,122 @@ fn build_settings_overlay(app: &App) -> Element<'_, Message> {
 fn sync_launch_settings(app: &mut App) {
     app.launch_settings.wallpaper_exe = app.ui_settings.wallpaper_exe.clone();
     app.launch_settings.show_fps = app.ui_settings.show_fps;
-    app.launch_settings.play_in_window_title = app.ui_settings.window_title.clone();
-    app.launch_settings.wm_class_contains = app.ui_settings.wm_class.clone();
+    app.launch_settings.play_in_window_title = "WE-DEBUG-WINDOW".to_string();
+    app.launch_settings.wm_class_contains = "wallpaper64".to_string();
+    app.launch_settings.x = 100;
+    app.launch_settings.y = 100;
 
     if let Ok(v) = app.ui_settings.fps_limit.parse::<u32>() {
         app.launch_settings.fps_limit = v.clamp(1, 360);
     }
-    if let Ok(v) = app.ui_settings.width.parse::<u32>() {
-        app.launch_settings.width = v;
+    if let Some(res) = &app.ui_settings.selected_resolution {
+        app.launch_settings.width = res.width;
+        app.launch_settings.height = res.height;
     }
-    if let Ok(v) = app.ui_settings.height.parse::<u32>() {
-        app.launch_settings.height = v;
+}
+
+fn setting_path_row<'a>(label: &'a str, value: String, on_press: Message) -> Element<'a, Message> {
+    row![
+        container(text(label).size(14)).width(170),
+        container(text(value).size(14).color(Color::from_rgb8(220, 228, 236)))
+            .width(Fill)
+            .padding([10, 12])
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.12, 0.12, 0.15, 0.9))),
+                border: Border {
+                    radius: 10.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+                },
+                ..Default::default()
+            }),
+        button(text("Browse").size(13)).padding([10, 14]).on_press(on_press),
+    ]
+    .align_y(Vertical::Center)
+    .spacing(10)
+    .into()
+}
+
+fn detect_supported_resolutions() -> Vec<ResolutionOption> {
+    let mut values = parse_xrandr_resolutions();
+    if values.is_empty() {
+        values = parse_wlrandr_resolutions();
     }
-    if let Ok(v) = app.ui_settings.x.parse::<i32>() {
-        app.launch_settings.x = v;
+    if values.is_empty() {
+        values.push(ResolutionOption { width: 1920, height: 1080 });
     }
-    if let Ok(v) = app.ui_settings.y.parse::<i32>() {
-        app.launch_settings.y = v;
+    values.sort_by_key(|v| (v.width, v.height));
+    values.dedup();
+    values
+}
+
+fn parse_xrandr_resolutions() -> Vec<ResolutionOption> {
+    let Ok(output) = Command::new("xrandr").arg("--query").output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
     }
+    parse_resolutions_from_text(String::from_utf8_lossy(&output.stdout).as_ref())
+}
+
+fn parse_wlrandr_resolutions() -> Vec<ResolutionOption> {
+    let Ok(output) = Command::new("wlr-randr").output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    parse_resolutions_from_text(String::from_utf8_lossy(&output.stdout).as_ref())
+}
+
+fn parse_resolutions_from_text(raw: &str) -> Vec<ResolutionOption> {
+    let mut result = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        for token in line.split_whitespace() {
+            let Some((w, h)) = token.split_once('x') else {
+                continue;
+            };
+            if let (Ok(width), Ok(height)) = (w.parse::<u32>(), h.parse::<u32>()) {
+                if width >= 640 && height >= 360 {
+                    result.push(ResolutionOption { width, height });
+                }
+            }
+        }
+    }
+    result
+}
+
+fn pick_initial_resolution(
+    supported: &[ResolutionOption],
+    width: u32,
+    height: u32,
+) -> Option<ResolutionOption> {
+    if let Some(found) = supported.iter().find(|r| r.width == width && r.height == height).cloned()
+    {
+        return Some(found);
+    }
+    supported.last().cloned()
+}
+
+fn format_path_for_display(path: &str, max_chars: usize) -> String {
+    let mut rendered = path.to_string();
+    if let Ok(home) = env::var("HOME") {
+        if rendered.starts_with(&home) {
+            rendered = rendered.replacen(&home, "~", 1);
+        }
+    }
+    if rendered.chars().count() <= max_chars {
+        return rendered;
+    }
+
+    let keep_head = max_chars.saturating_sub(3) / 2;
+    let keep_tail = max_chars.saturating_sub(3) - keep_head;
+    let head: String = rendered.chars().take(keep_head).collect();
+    let tail: String =
+        rendered.chars().rev().take(keep_tail).collect::<String>().chars().rev().collect();
+    format!("{head}...{tail}")
 }
 
 fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
