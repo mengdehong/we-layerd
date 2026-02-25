@@ -24,3 +24,9 @@ wm_class_contains = "wallpaper"
 mode = "wine_layerd"
 wallpaper_type = "scene"
 # video_file = "/path/to/video.mp4"
+
+[cgroup]
+enabled = false
+mode = "detect" # detect | limit_wine
+# memory_max = "2147483648" # bytes or "max"
+# cpu_max = "50000 100000"  # quota period, or "max 100000"
