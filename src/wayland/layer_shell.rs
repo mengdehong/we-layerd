@@ -330,7 +330,13 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
     Ok(())
 }
 
-pub fn run_video_background_surface(video_file: &Path) -> Result<()> {
+pub fn run_video_background_surface(
+    video_file: &Path,
+    fps_limit: u32,
+    show_fps: bool,
+    fps_report_interval_secs: u64,
+    scale_mode: ScaleMode,
+) -> Result<()> {
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
     let (globals, mut event_queue) =
         registry_queue_init::<AppState>(&conn).context("failed to initialize Wayland registry")?;
@@ -378,56 +384,114 @@ pub fn run_video_background_surface(video_file: &Path) -> Result<()> {
     let _ = event_queue.roundtrip(&mut state);
 
     let mut player = VideoPlayer::new(video_file)?;
-    info!(outputs = state.outputs.len(), file = %video_file.display(), "video-native loop started");
+    let source_fps = player.source_fps().unwrap_or(30.0).clamp(1.0, 240.0);
+    let target_fps = source_fps.min(fps_limit.max(1) as f64).max(1.0);
+    let frame_interval = Duration::from_secs_f64(1.0 / target_fps);
+    let mut next_frame_deadline = Instant::now();
+    let fps_report_interval = Duration::from_secs(fps_report_interval_secs.max(1));
+    let mut fps_window_start = Instant::now();
+    let mut render_frame_count: u64 = 0;
+    let mut decode_frame_count: u64 = 0;
+    let mut measured_render_fps = target_fps as f32;
+    info!(
+        outputs = state.outputs.len(),
+        file = %video_file.display(),
+        source_fps = format_args!("{source_fps:.2}"),
+        target_fps = format_args!("{target_fps:.2}"),
+        fps_limit,
+        "video-native loop started"
+    );
 
     while state.running {
-        let now = Instant::now();
+        let frame_start = Instant::now();
         if let Err(err) = event_queue.dispatch_pending(&mut state) {
             error!(error = %err, "wayland event dispatch failed in video mode");
         }
 
-        if let Some(frame) = player.tick(now)? {
+        if frame_start >= next_frame_deadline {
+            let decoded = player.advance_frame()?;
+            if decoded {
+                decode_frame_count += 1;
+            }
+            if let Some(frame) = player.current_frame() {
+                for output in &mut state.outputs {
+                    if let Some(renderer) = &mut output.renderer {
+                        renderer.set_scale_mode(scale_mode);
+                        renderer.set_fps_overlay(measured_render_fps, show_fps);
+                        if let Err(err) = renderer.upload_bgra(
+                            frame.width,
+                            frame.height,
+                            frame.stride,
+                            &frame.bgra,
+                        ) {
+                            warn!(
+                                error = %err,
+                                output = %output.name,
+                                "failed to upload video frame"
+                            );
+                        }
+                    }
+                }
+            }
+
             for output in &mut state.outputs {
                 if let Some(renderer) = &mut output.renderer {
-                    if let Err(err) =
-                        renderer.upload_bgra(frame.width, frame.height, frame.stride, &frame.bgra)
-                    {
-                        warn!(error = %err, output = %output.name, "failed to upload video frame");
-                    }
-                }
-            }
-        }
-
-        for output in &mut state.outputs {
-            if let Some(renderer) = &mut output.renderer {
-                if let Err(err) = renderer.render() {
-                    output.render_fail_streak += 1;
-                    let backoff_ms = (output.render_fail_streak.saturating_mul(10)).min(500);
-                    output.render_backoff_until =
-                        Some(Instant::now() + Duration::from_millis(backoff_ms));
-                    if output.render_fail_streak <= 5 || output.render_fail_streak % 120 == 0 {
-                        warn!(
-                            error = %err,
+                    renderer.set_scale_mode(scale_mode);
+                    renderer.set_fps_overlay(measured_render_fps, show_fps);
+                    if let Err(err) = renderer.render() {
+                        output.render_fail_streak += 1;
+                        let backoff_ms = (output.render_fail_streak.saturating_mul(10)).min(500);
+                        output.render_backoff_until =
+                            Some(Instant::now() + Duration::from_millis(backoff_ms));
+                        if output.render_fail_streak <= 5 || output.render_fail_streak % 120 == 0 {
+                            warn!(
+                                error = %err,
+                                output = %output.name,
+                                streak = output.render_fail_streak,
+                                backoff_ms,
+                                configured_once = output.configured_once,
+                                "video render failed for output"
+                            );
+                        }
+                    } else if output.render_fail_streak > 0 {
+                        info!(
                             output = %output.name,
-                            streak = output.render_fail_streak,
-                            backoff_ms,
-                            configured_once = output.configured_once,
-                            "video render failed for output"
+                            recovered_after = output.render_fail_streak,
+                            "video render path recovered"
                         );
+                        output.render_fail_streak = 0;
+                        output.render_backoff_until = None;
                     }
-                } else if output.render_fail_streak > 0 {
-                    info!(
-                        output = %output.name,
-                        recovered_after = output.render_fail_streak,
-                        "video render path recovered"
-                    );
-                    output.render_fail_streak = 0;
-                    output.render_backoff_until = None;
                 }
+            }
+
+            if show_fps {
+                render_frame_count += 1;
+                let elapsed = fps_window_start.elapsed();
+                if elapsed >= fps_report_interval {
+                    measured_render_fps =
+                        (render_frame_count as f64 / elapsed.as_secs_f64()) as f32;
+                    let measured_decode_fps = decode_frame_count as f64 / elapsed.as_secs_f64();
+                    info!(
+                        render_fps = format_args!("{:.1}", measured_render_fps),
+                        decode_fps = format_args!("{:.1}", measured_decode_fps),
+                        sample_window_ms = elapsed.as_millis(),
+                        "video runtime fps"
+                    );
+                    fps_window_start = Instant::now();
+                    render_frame_count = 0;
+                    decode_frame_count = 0;
+                }
+            }
+
+            while next_frame_deadline <= frame_start {
+                next_frame_deadline += frame_interval;
             }
         }
 
-        std::thread::sleep(Duration::from_millis(1));
+        if let Some(remaining) = next_frame_deadline.checked_duration_since(Instant::now()) {
+            std::thread::sleep(remaining.min(Duration::from_millis(5)));
+        }
     }
 
     Ok(())

@@ -2,7 +2,6 @@ use std::{
     io::{ErrorKind, Read},
     path::{Path, PathBuf},
     process::{Child, ChildStdout, Command, Stdio},
-    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -17,36 +16,31 @@ pub struct VideoFrame {
 
 pub struct VideoPlayer {
     decoder: VideoDecoder,
-    frame_interval: Duration,
-    next_frame_deadline: Instant,
     current: Option<VideoFrame>,
 }
 
 impl VideoPlayer {
     pub fn new(video_file: &Path) -> Result<Self> {
         let decoder = VideoDecoder::open(video_file.to_path_buf(), true)?;
-        let fps = decoder.estimated_fps().unwrap_or(30.0).clamp(1.0, 240.0);
-        let frame_interval = Duration::from_secs_f64(1.0 / fps);
-
-        Ok(Self { decoder, frame_interval, next_frame_deadline: Instant::now(), current: None })
+        Ok(Self { decoder, current: None })
     }
 
-    pub fn tick(&mut self, now: Instant) -> Result<Option<&VideoFrame>> {
-        if self.current.is_none() {
-            self.current = self.decoder.decode_next_frame()?;
-            self.next_frame_deadline = now + self.frame_interval;
-            return Ok(self.current.as_ref());
-        }
+    pub fn source_fps(&self) -> Option<f64> {
+        self.decoder.estimated_fps()
+    }
 
-        if now >= self.next_frame_deadline {
-            if let Some(frame) = self.decoder.decode_next_frame()? {
+    pub fn advance_frame(&mut self) -> Result<bool> {
+        match self.decoder.decode_next_frame()? {
+            Some(frame) => {
                 self.current = Some(frame);
+                Ok(true)
             }
-            self.next_frame_deadline = now + self.frame_interval;
-            return Ok(self.current.as_ref());
+            None => Ok(false),
         }
+    }
 
-        Ok(None)
+    pub fn current_frame(&self) -> Option<&VideoFrame> {
+        self.current.as_ref()
     }
 }
 

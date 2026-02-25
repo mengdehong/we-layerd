@@ -15,7 +15,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
 
     if let Some(runtime) = &cfg.runtime {
         if runtime.mode == RuntimeMode::VideoNative {
-            return run_video_native(runtime.video_file.as_deref());
+            return run_video_native(runtime.video_file.as_deref(), &cfg);
         }
     }
 
@@ -62,13 +62,19 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     })
 }
 
-fn run_video_native(video_file: Option<&str>) -> Result<()> {
+fn run_video_native(video_file: Option<&str>, cfg: &Config) -> Result<()> {
     let video = video_file
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow!("runtime.video_file is required when runtime.mode=video_native"))?;
 
     info!(video, "starting native video mode via ffmpeg + wgpu");
-    wayland::layer_shell::run_video_background_surface(Path::new(video))
+    wayland::layer_shell::run_video_background_surface(
+        Path::new(video),
+        cfg.general.fps_limit,
+        cfg.general.show_fps,
+        cfg.general.fps_report_interval_secs,
+        cfg.general.scale_mode,
+    )
 }
 
 pub fn doctor() -> Result<()> {
