@@ -4,9 +4,7 @@ use anyhow::{Context, Result};
 use tracing::{info, warn};
 use x11rb::{
     connection::Connection,
-    protocol::xproto::{
-        Atom, AtomEnum, ConnectionExt as _, GetPropertyReply, MapState, Window,
-    },
+    protocol::xproto::{Atom, AtomEnum, ConnectionExt as _, GetPropertyReply, MapState, Window},
     rust_connection::RustConnection,
 };
 
@@ -43,7 +41,8 @@ pub fn find_window_for_process(
     config: &CaptureConfig,
     fallback_pid: Option<u32>,
 ) -> Result<Option<WindowFinderResult>> {
-    let (conn, screen_num) = RustConnection::connect(None).context("failed to connect to X11 display")?;
+    let (conn, screen_num) =
+        RustConnection::connect(None).context("failed to connect to X11 display")?;
     let root = conn.setup().roots[screen_num].root;
     let atoms = intern_atoms(&conn)?;
 
@@ -85,10 +84,7 @@ pub fn find_window_for_process(
                 height = meta.height,
                 "matched X11 window"
             );
-            return Ok(Some(WindowFinderResult {
-                window,
-                scanned_windows: last_scan_count,
-            }));
+            return Ok(Some(WindowFinderResult { window, scanned_windows: last_scan_count }));
         }
 
         std::thread::sleep(POLL_INTERVAL);

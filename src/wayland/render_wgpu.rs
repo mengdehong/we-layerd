@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
+use raw_window_handle::{
+    RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
+};
 use tracing::{info, warn};
 use wayland_client::{protocol::wl_surface::WlSurface, Connection, Proxy};
 
@@ -385,10 +387,16 @@ impl WgpuRenderer {
         });
         queue.write_buffer(&overlay_buffer, 0, bytemuck::bytes_of(&overlay));
 
-        let (texture, bind_group) = create_texture_resources(&device, &queue, &bind_group_layout, &overlay_buffer, 2, 2, 2 * 4, &[
-            40, 40, 40, 255, 80, 80, 80, 255,
-            80, 80, 80, 255, 40, 40, 40, 255,
-        ]);
+        let (texture, bind_group) = create_texture_resources(
+            &device,
+            &queue,
+            &bind_group_layout,
+            &overlay_buffer,
+            2,
+            2,
+            2 * 4,
+            &[40, 40, 40, 255, 80, 80, 80, 255, 80, 80, 80, 255, 40, 40, 40, 255],
+        );
 
         Ok(Self {
             surface,
@@ -447,7 +455,9 @@ impl WgpuRenderer {
     pub fn upload_bgra(&mut self, width: u32, height: u32, stride: u32, bgra: &[u8]) -> Result<()> {
         let next_src_width = width.max(1) as f32;
         let next_src_height = height.max(1) as f32;
-        if self.overlay.source_width != next_src_width || self.overlay.source_height != next_src_height {
+        if self.overlay.source_width != next_src_width
+            || self.overlay.source_height != next_src_height
+        {
             self.overlay.source_width = next_src_width;
             self.overlay.source_height = next_src_height;
             self.overlay_dirty = true;
@@ -472,11 +482,7 @@ impl WgpuRenderer {
                 packed_row
             ));
         }
-        let expected = if height == 0 {
-            0
-        } else {
-            stride * (height as usize - 1) + packed_row
-        };
+        let expected = if height == 0 { 0 } else { stride * (height as usize - 1) + packed_row };
         if bgra.len() < expected {
             return Err(anyhow!(
                 "invalid frame payload: got {}, expected at least {}",
@@ -494,17 +500,16 @@ impl WgpuRenderer {
                 stride,
                 "recreating frame texture resources"
             );
-            let (texture, bind_group) =
-                create_texture_resources(
-                    &self.device,
-                    &self.queue,
-                    &self.bind_group_layout,
-                    &self.overlay_buffer,
-                    width,
-                    height,
-                    stride as u32,
-                    bgra,
-                );
+            let (texture, bind_group) = create_texture_resources(
+                &self.device,
+                &self.queue,
+                &self.bind_group_layout,
+                &self.overlay_buffer,
+                width,
+                height,
+                stride as u32,
+                bgra,
+            );
             self.texture = texture;
             self.bind_group = bind_group;
             self.texture_size = (width, height);
@@ -524,11 +529,7 @@ impl WgpuRenderer {
                 bytes_per_row: Some(stride as u32),
                 rows_per_image: Some(height),
             },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
 
         Ok(())
@@ -551,7 +552,8 @@ impl WgpuRenderer {
                 frame
             }
             Err(err) => {
-                let recoverable = matches!(err, wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost);
+                let recoverable =
+                    matches!(err, wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost);
                 if recoverable {
                     warn!(
                         error = ?err,
@@ -582,7 +584,8 @@ impl WgpuRenderer {
                         }
                         Err(retry_err) => {
                             self.acquire_fail_streak += 1;
-                            if self.acquire_fail_streak <= 5 || self.acquire_fail_streak % 120 == 0 {
+                            if self.acquire_fail_streak <= 5 || self.acquire_fail_streak % 120 == 0
+                            {
                                 warn!(
                                     error = ?retry_err,
                                     streak = self.acquire_fail_streak,
@@ -600,32 +603,28 @@ impl WgpuRenderer {
                         }
                     }
                 } else {
-                self.acquire_fail_streak += 1;
-                if self.acquire_fail_streak <= 5 || self.acquire_fail_streak % 120 == 0 {
-                    warn!(
-                        error = ?err,
-                        streak = self.acquire_fail_streak,
-                        frame_seq = self.frame_seq,
-                        surface_width = self.config.width,
-                        surface_height = self.config.height,
-                        texture_width = self.texture_size.0,
-                        texture_height = self.texture_size.1,
-                        "failed to acquire frame from wgpu surface"
-                    );
-                }
-                return Err(anyhow!("failed to acquire frame from wgpu surface: {err:?}"));
+                    self.acquire_fail_streak += 1;
+                    if self.acquire_fail_streak <= 5 || self.acquire_fail_streak % 120 == 0 {
+                        warn!(
+                            error = ?err,
+                            streak = self.acquire_fail_streak,
+                            frame_seq = self.frame_seq,
+                            surface_width = self.config.width,
+                            surface_height = self.config.height,
+                            texture_width = self.texture_size.0,
+                            texture_height = self.texture_size.1,
+                            "failed to acquire frame from wgpu surface"
+                        );
+                    }
+                    return Err(anyhow!("failed to acquire frame from wgpu surface: {err:?}"));
                 }
             }
         };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("we-layerd-frame-encoder"),
-            });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("we-layerd-frame-encoder"),
+        });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -656,8 +655,7 @@ impl WgpuRenderer {
         if !self.overlay_dirty {
             return;
         }
-        self.queue
-            .write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
+        self.queue.write_buffer(&self.overlay_buffer, 0, bytemuck::bytes_of(&self.overlay));
         self.overlay_dirty = false;
     }
 }
@@ -682,11 +680,7 @@ fn create_texture_resources(
 ) -> (wgpu::Texture, wgpu::BindGroup) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("we-layerd-frame-texture"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -708,11 +702,7 @@ fn create_texture_resources(
             bytes_per_row: Some(stride),
             rows_per_image: Some(height),
         },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
     );
 
     let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -732,14 +722,8 @@ fn create_texture_resources(
                 binding: 0,
                 resource: wgpu::BindingResource::TextureView(&texture_view),
             },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: overlay_buffer.as_entire_binding(),
-            },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+            wgpu::BindGroupEntry { binding: 2, resource: overlay_buffer.as_entire_binding() },
         ],
     });
 

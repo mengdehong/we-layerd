@@ -57,20 +57,13 @@ pub fn scan_workshop_wallpapers(workshop_app_root: &Path) -> Result<Vec<Wallpape
 
         let meta = parse_project_json(&project_json)?;
         let ty = parse_type(&meta.r#type);
-        let source_file = if meta.file.trim().is_empty() {
-            None
-        } else {
-            Some(path.join(meta.file))
-        };
+        let source_file =
+            if meta.file.trim().is_empty() { None } else { Some(path.join(meta.file)) };
         let preview = detect_preview_image(&path);
         result.push(WallpaperEntry {
             id,
             project_json,
-            title: if meta.title.trim().is_empty() {
-                "Untitled".to_string()
-            } else {
-                meta.title
-            },
+            title: if meta.title.trim().is_empty() { "Untitled".to_string() } else { meta.title },
             ty,
             preview,
             source_file,

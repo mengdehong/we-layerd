@@ -2,11 +2,7 @@ use anyhow::Result;
 use wayland_client::{globals::Global, protocol::wl_output::WlOutput, QueueHandle};
 
 pub fn output_globals(globals: &[Global]) -> Vec<Global> {
-    globals
-        .iter()
-        .filter(|g| g.interface == "wl_output")
-        .cloned()
-        .collect()
+    globals.iter().filter(|g| g.interface == "wl_output").cloned().collect()
 }
 
 pub fn bind_output<State>(

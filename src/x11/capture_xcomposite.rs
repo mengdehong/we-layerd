@@ -7,7 +7,9 @@ use x11rb::{
     protocol::{
         composite::{self, ConnectionExt as _},
         shm::{self, ConnectionExt as _},
-        xproto::{ChangeWindowAttributesAux, ConnectionExt as _, EventMask, ImageFormat, Pixmap, Window},
+        xproto::{
+            ChangeWindowAttributesAux, ConnectionExt as _, EventMask, ImageFormat, Pixmap, Window,
+        },
         Event,
     },
     rust_connection::RustConnection,
@@ -45,7 +47,8 @@ struct CachedGeometry {
 
 impl XCompositeCapturer {
     pub fn new(window: Window) -> Result<Self> {
-        let (conn, _) = RustConnection::connect(None).context("failed to connect to X11 display")?;
+        let (conn, _) =
+            RustConnection::connect(None).context("failed to connect to X11 display")?;
         let _ = conn
             .composite_query_version(0, 4)
             .context("failed to query XComposite extension")?
@@ -65,29 +68,18 @@ impl XCompositeCapturer {
 
         let shm_enabled = conn.shm_query_version().ok().and_then(|c| c.reply().ok()).is_some();
 
-        Ok(Self {
-            conn,
-            window,
-            shm: None,
-            cached_geometry: None,
-            shm_enabled,
-            shm_warned: false,
-        })
+        Ok(Self { conn, window, shm: None, cached_geometry: None, shm_enabled, shm_warned: false })
     }
 
     pub fn capture_frame(&mut self) -> Result<CapturedFrame> {
         self.update_cached_geometry_from_events();
 
-        let pixmap = self
-            .conn
-            .generate_id()
-            .context("failed to generate X11 pixmap id")?;
+        let pixmap = self.conn.generate_id().context("failed to generate X11 pixmap id")?;
         self.conn
             .composite_name_window_pixmap(self.window, pixmap)
             .context("failed to name XComposite window pixmap")?;
-        let geometry = self
-            .query_pixmap_geometry(pixmap)
-            .context("failed to query pixmap geometry")?;
+        let geometry =
+            self.query_pixmap_geometry(pixmap).context("failed to query pixmap geometry")?;
 
         let frame = if self.shm_enabled {
             match self.capture_pixmap_bgra_shm(pixmap, geometry) {
@@ -130,19 +122,13 @@ impl XCompositeCapturer {
         let packed_stride = width as usize * 4;
         let stride = x11_stride_for_depth(&self.conn, geometry.depth, width)?;
         if stride < packed_stride {
-            return Err(anyhow!(
-                "invalid X11 row stride {} for width {}",
-                stride,
-                width
-            ));
+            return Err(anyhow!("invalid X11 row stride {} for width {}", stride, width));
         }
         let len = stride * height as usize;
         self.ensure_shm_capacity(len)?;
 
-        let shm = self
-            .shm
-            .as_ref()
-            .ok_or_else(|| anyhow!("internal error: shm segment missing"))?;
+        let shm =
+            self.shm.as_ref().ok_or_else(|| anyhow!("internal error: shm segment missing"))?;
         self.conn
             .shm_get_image(
                 pixmap,
@@ -221,21 +207,13 @@ impl XCompositeCapturer {
     }
 
     fn ensure_shm_capacity(&mut self, required_len: usize) -> Result<()> {
-        if self
-            .shm
-            .as_ref()
-            .map(|seg| seg.len >= required_len)
-            .unwrap_or(false)
-        {
+        if self.shm.as_ref().map(|seg| seg.len >= required_len).unwrap_or(false) {
             return Ok(());
         }
 
         self.release_shm();
 
-        let seg = self
-            .conn
-            .generate_id()
-            .context("failed to generate shm seg id")?;
+        let seg = self.conn.generate_id().context("failed to generate shm seg id")?;
         let reply = self
             .conn
             .shm_create_segment(seg, required_len as u32, false)
@@ -259,11 +237,7 @@ impl XCompositeCapturer {
             return Err(anyhow!("mmap failed for XShm segment"));
         }
 
-        self.shm = Some(ShmSegment {
-            seg,
-            addr: addr.cast::<u8>(),
-            len: required_len,
-        });
+        self.shm = Some(ShmSegment { seg, addr: addr.cast::<u8>(), len: required_len });
         Ok(())
     }
 
@@ -311,10 +285,7 @@ fn capture_pixmap_bgra(
         .context("XGetImage reply failed")?;
 
     if image.depth < 24 {
-        return Err(anyhow!(
-            "unsupported X11 image depth {}, expected at least 24",
-            image.depth
-        ));
+        return Err(anyhow!("unsupported X11 image depth {}, expected at least 24", image.depth));
     }
 
     let expected = width as usize * height as usize * 4;
@@ -360,11 +331,7 @@ fn x11_stride_for_depth(conn: &RustConnection, depth: u8, width: u16) -> Result<
 
     let bits_per_pixel = usize::from(format.bits_per_pixel);
     if bits_per_pixel < 32 {
-        return Err(anyhow!(
-            "unsupported bits_per_pixel {} for depth {}",
-            bits_per_pixel,
-            depth
-        ));
+        return Err(anyhow!("unsupported bits_per_pixel {} for depth {}", bits_per_pixel, depth));
     }
 
     let scanline_pad = usize::from(format.scanline_pad.max(8));
@@ -381,7 +348,5 @@ pub fn save_frame_png(frame: &CapturedFrame, path: &Path) -> Result<()> {
 
     let image: RgbaImage = ImageBuffer::from_vec(frame.width, frame.height, rgba)
         .ok_or_else(|| anyhow!("invalid frame dimensions for PNG output"))?;
-    image
-        .save(path)
-        .with_context(|| format!("failed to save capture PNG: {}", path.display()))
+    image.save(path).with_context(|| format!("failed to save capture PNG: {}", path.display()))
 }

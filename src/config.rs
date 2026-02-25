@@ -153,11 +153,7 @@ impl Default for GeneralConfig {
 
 impl Default for WineConfig {
     fn default() -> Self {
-        Self {
-            command: default_wine_cmd(),
-            args: Vec::new(),
-            wallpaper_exe: String::new(),
-        }
+        Self { command: default_wine_cmd(), args: Vec::new(), wallpaper_exe: String::new() }
     }
 }
 

@@ -6,7 +6,9 @@ use std::{
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{button, checkbox, column, container, image, row, scrollable, stack, svg, text, text_input},
+    widget::{
+        button, checkbox, column, container, image, row, scrollable, stack, svg, text, text_input,
+    },
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
 use we_core::{
@@ -16,9 +18,7 @@ use we_core::{
 };
 
 fn main() -> iced::Result {
-    iced::application("we-gui", update, view)
-        .subscription(subscription)
-        .run_with(App::init)
+    iced::application("we-gui", update, view).subscription(subscription).run_with(App::init)
 }
 
 struct App {
@@ -72,16 +72,14 @@ struct UiSettings {
 
 fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
-        Message::AutoScan => {
-            Task::perform(scan_wallpapers(), Message::Scanned)
-        }
+        Message::AutoScan => Task::perform(scan_wallpapers(), Message::Scanned),
         Message::Scanned(result) => match result {
             Ok(entries) => {
                 app.entries = entries;
                 Task::none()
             }
             Err(_err) => Task::none(),
-        }
+        },
         Message::SelectWallpaper(index) => {
             let Some(entry) = app.entries.get(index).cloned() else {
                 return Task::none();
@@ -114,11 +112,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            let spawn = Command::new("we-layerd")
-                .arg("run")
-                .arg("--config")
-                .arg(&app.config_path)
-                .spawn();
+            let spawn =
+                Command::new("we-layerd").arg("run").arg("--config").arg(&app.config_path).spawn();
 
             match spawn {
                 Ok(child) => {
@@ -198,45 +193,37 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
 fn view(app: &App) -> Element<'_, Message> {
     let grid = build_wallpaper_grid(&app.entries, app.selected_id.as_ref(), app.viewport_width);
 
-    let content = container(scrollable(grid).width(Fill).height(Fill))
-        .width(Fill)
-        .height(Fill);
+    let content = container(scrollable(grid).width(Fill).height(Fill)).width(Fill).height(Fill);
 
     let floating = container(
         column![
             button(
-                svg(svg::Handle::from_memory(include_bytes!(
-                    "../assets/icons/stop.svg"
-                )))
-                .width(24)
-                .height(24),
+                svg(svg::Handle::from_memory(include_bytes!("../assets/icons/stop.svg")))
+                    .width(24)
+                    .height(24),
             )
-                .width(52)
-                .height(52)
-                .style(secondary_fab_style)
-                .on_press(Message::StopPressed),
+            .width(52)
+            .height(52)
+            .style(secondary_fab_style)
+            .on_press(Message::StopPressed),
             button(
-                svg(svg::Handle::from_memory(include_bytes!(
-                    "../assets/icons/settings.svg"
-                )))
-                .width(24)
-                .height(24),
+                svg(svg::Handle::from_memory(include_bytes!("../assets/icons/settings.svg")))
+                    .width(24)
+                    .height(24),
             )
-                .width(52)
-                .height(52)
-                .style(secondary_fab_style)
-                .on_press(Message::SettingsPressed),
+            .width(52)
+            .height(52)
+            .style(secondary_fab_style)
+            .on_press(Message::SettingsPressed),
             button(
-                svg(svg::Handle::from_memory(include_bytes!(
-                    "../assets/icons/play_arrow.svg"
-                )))
-                .width(28)
-                .height(28),
+                svg(svg::Handle::from_memory(include_bytes!("../assets/icons/play_arrow.svg")))
+                    .width(28)
+                    .height(28),
             )
-                .width(60)
-                .height(60)
-                .style(primary_fab_style)
-                .on_press(Message::PlayPressed),
+            .width(60)
+            .height(60)
+            .style(primary_fab_style)
+            .on_press(Message::PlayPressed),
         ]
         .spacing(12),
     )
@@ -250,9 +237,7 @@ fn view(app: &App) -> Element<'_, Message> {
         None
     } else {
         let warning = container(
-            text("we-layerd not found in PATH")
-                .size(30)
-                .color(Color::from_rgb8(150, 205, 255)),
+            text("we-layerd not found in PATH").size(30).color(Color::from_rgb8(150, 205, 255)),
         )
         .width(Fill)
         .height(Fill)
@@ -262,11 +247,8 @@ fn view(app: &App) -> Element<'_, Message> {
         Some(warning.into())
     };
 
-    let settings_overlay: Option<Element<'_, Message>> = if app.show_settings {
-        Some(build_settings_overlay(app))
-    } else {
-        None
-    };
+    let settings_overlay: Option<Element<'_, Message>> =
+        if app.show_settings { Some(build_settings_overlay(app)) } else { None };
 
     match (runtime_warning, settings_overlay) {
         (Some(w), Some(s)) => stack![content, w, s, floating].into(),
@@ -297,7 +279,8 @@ fn subscription(_app: &App) -> Subscription<Message> {
 
 impl App {
     fn init() -> (Self, Task<Message>) {
-        let config_path = steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
+        let config_path =
+            steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
         let mut launch_settings = LaunchSettings::default();
         if let Some(exe) = steam::discover_wallpaper_engine_exe() {
             launch_settings.wallpaper_exe = exe.display().to_string();
@@ -394,22 +377,14 @@ fn make_wallpaper_card<'a>(
             .into()
     };
 
-    let chip = container(text(wallpaper_type_name(entry.ty)).size(12))
-        .padding([3, 8])
-        .style(|_theme: &Theme| container::Style {
+    let chip = container(text(wallpaper_type_name(entry.ty)).size(12)).padding([3, 8]).style(
+        |_theme: &Theme| container::Style {
             text_color: Some(Color::WHITE),
-            background: Some(Background::Color(Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.45,
-            })),
-            border: Border {
-                radius: 10.0.into(),
-                ..Default::default()
-            },
+            background: Some(Background::Color(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.45 })),
+            border: Border { radius: 10.0.into(), ..Default::default() },
             ..Default::default()
-        });
+        },
+    );
 
     let chip_overlay = container(chip)
         .width(Fill)
@@ -423,30 +398,22 @@ fn make_wallpaper_card<'a>(
     let border_color = if is_selected {
         Color::from_rgb8(255, 255, 255)
     } else {
-        Color {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 0.1,
-        }
+        Color { r: 1.0, g: 1.0, b: 1.0, a: 0.1 }
     };
 
-    let frame = container(composed)
-        .width(card_width)
-        .height(card_height)
-        .style(move |_theme: &Theme| container::Style {
-            border: Border {
-                radius: 14.0.into(),
-                width: if is_selected { 2.0 } else { 1.0 },
-                color: border_color,
-            },
-            ..Default::default()
+    let frame =
+        container(composed).width(card_width).height(card_height).style(move |_theme: &Theme| {
+            container::Style {
+                border: Border {
+                    radius: 14.0.into(),
+                    width: if is_selected { 2.0 } else { 1.0 },
+                    color: border_color,
+                },
+                ..Default::default()
+            }
         });
 
-    button(frame)
-        .on_press(Message::SelectWallpaper(index))
-        .style(image_card_button_style)
-        .into()
+    button(frame).on_press(Message::SelectWallpaper(index)).style(image_card_button_style).into()
 }
 
 fn build_settings_overlay(app: &App) -> Element<'_, Message> {
@@ -462,10 +429,15 @@ fn build_settings_overlay(app: &App) -> Element<'_, Message> {
             text_input("FPS Limit", &app.ui_settings.fps_limit)
                 .on_input(Message::FpsLimitChanged)
                 .padding(10),
-            checkbox("Show realtime FPS", app.ui_settings.show_fps).on_toggle(Message::ShowFpsToggled),
+            checkbox("Show realtime FPS", app.ui_settings.show_fps)
+                .on_toggle(Message::ShowFpsToggled),
             row![
-                text_input("Width", &app.ui_settings.width).on_input(Message::WidthChanged).padding(8),
-                text_input("Height", &app.ui_settings.height).on_input(Message::HeightChanged).padding(8),
+                text_input("Width", &app.ui_settings.width)
+                    .on_input(Message::WidthChanged)
+                    .padding(8),
+                text_input("Height", &app.ui_settings.height)
+                    .on_input(Message::HeightChanged)
+                    .padding(8),
                 text_input("X", &app.ui_settings.x).on_input(Message::XChanged).padding(8),
                 text_input("Y", &app.ui_settings.y).on_input(Message::YChanged).padding(8),
             ]
@@ -547,15 +519,9 @@ fn primary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(Color::from_rgb(r, g, b))),
         text_color: Color::WHITE,
-        border: Border {
-            radius: 30.0.into(),
-            ..Default::default()
-        },
+        border: Border { radius: 30.0.into(), ..Default::default() },
         shadow: iced::Shadow {
-            color: Color {
-                a: 0.35,
-                ..Color::BLACK
-            },
+            color: Color { a: 0.35, ..Color::BLACK },
             blur_radius: 12.0,
             offset: iced::Vector::new(0.0, 4.0),
         },
@@ -578,10 +544,7 @@ fn secondary_fab_style(_theme: &Theme, status: button::Status) -> button::Style 
             color: Color::from_rgba(1.0, 1.0, 1.0, 0.14),
         },
         shadow: iced::Shadow {
-            color: Color {
-                a: 0.28,
-                ..Color::BLACK
-            },
+            color: Color { a: 0.28, ..Color::BLACK },
             blur_radius: 10.0,
             offset: iced::Vector::new(0.0, 3.0),
         },

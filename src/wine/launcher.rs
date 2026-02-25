@@ -3,7 +3,10 @@ use std::{
     os::unix::process::CommandExt,
     path::Path,
     process::{Child, Command, Stdio},
-    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -76,7 +79,11 @@ impl WineProcessHandle {
                                 match spawn_child(&config) {
                                     Ok(new_child) => {
                                         let new_pgid = new_child.id() as i32;
-                                        info!(pid = new_child.id(), pgid = new_pgid, "restarted wine process");
+                                        info!(
+                                            pid = new_child.id(),
+                                            pgid = new_pgid,
+                                            "restarted wine process"
+                                        );
                                         if let Ok(mut pgid_guard) = pgid.lock() {
                                             *pgid_guard = Some(new_pgid);
                                         }
@@ -104,20 +111,15 @@ impl WineProcessHandle {
     }
 
     pub fn pid(&self) -> Option<u32> {
-        self.child
-            .lock()
-            .ok()
-            .and_then(|guard| guard.as_ref().map(std::process::Child::id))
+        self.child.lock().ok().and_then(|guard| guard.as_ref().map(std::process::Child::id))
     }
 
     pub fn terminate(&self) -> Result<()> {
         self.stop.store(true, Ordering::Relaxed);
 
         let pgid = {
-            let guard = self
-                .pgid
-                .lock()
-                .map_err(|_| anyhow!("wine process group lock poisoned"))?;
+            let guard =
+                self.pgid.lock().map_err(|_| anyhow!("wine process group lock poisoned"))?;
             *guard
         };
 
@@ -125,10 +127,8 @@ impl WineProcessHandle {
             terminate_process_group(pgid)?;
         }
 
-        let mut guard = self
-            .child
-            .lock()
-            .map_err(|_| anyhow!("wine child process lock poisoned"))?;
+        let mut guard =
+            self.child.lock().map_err(|_| anyhow!("wine child process lock poisoned"))?;
 
         if let Some(child) = guard.as_mut() {
             let _ = child.wait();
@@ -164,10 +164,7 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
 
     let exe_path = Path::new(&config.wallpaper_exe);
     if !exe_path.exists() {
-        return Err(anyhow!(
-            "Wallpaper executable does not exist: {}",
-            exe_path.display()
-        ));
+        return Err(anyhow!("Wallpaper executable does not exist: {}", exe_path.display()));
     }
 
     let mut cmd = Command::new(&config.command);
@@ -186,11 +183,7 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
     }
 
     cmd.spawn().with_context(|| {
-        format!(
-            "failed to spawn wine command '{}' for {}",
-            config.command,
-            config.wallpaper_exe
-        )
+        format!("failed to spawn wine command '{}' for {}", config.command, config.wallpaper_exe)
     })
 }
 
