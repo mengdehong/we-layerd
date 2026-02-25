@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -25,6 +26,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 
 use crate::{
     config::{CaptureConfig, ScaleMode},
+    ipc::ControlCommand,
     video::decoder::VideoPlayer,
     wayland::{outputs, render_wgpu::WgpuRenderer},
     x11::{capture_xcomposite, window_finder},
@@ -134,7 +136,10 @@ delegate_noop!(AppState: ignore WlOutput);
 delegate_noop!(AppState: ignore WlRegion);
 delegate_noop!(AppState: ignore ZwlrLayerShellV1);
 
-pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
+pub fn run_single_background_surface(
+    run_cfg: LayerRunConfig,
+    control_rx: Option<&mpsc::Receiver<ControlCommand>>,
+) -> Result<()> {
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
     let (globals, mut event_queue) =
         registry_queue_init::<AppState>(&conn).context("failed to initialize Wayland registry")?;
@@ -195,14 +200,23 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
     let mut fps_frame_count: u64 = 0;
     let mut measured_fps = fps as f32;
     info!(outputs = state.outputs.len(), fps, "wayland multi-output loop started");
+    let mut paused = false;
 
     while state.running {
         let frame_start = Instant::now();
         let now = Instant::now();
         let mut frame_cache: HashMap<u32, capture_xcomposite::CapturedFrame> = HashMap::new();
+        process_control(control_rx, &mut state.running, &mut paused);
+        if !state.running {
+            break;
+        }
 
         if let Err(err) = event_queue.dispatch_pending(&mut state) {
             error!(error = %err, "wayland event dispatch failed");
+        }
+        if paused {
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
         }
 
         for output in &mut state.outputs {
@@ -336,6 +350,7 @@ pub fn run_video_background_surface(
     show_fps: bool,
     fps_report_interval_secs: u64,
     scale_mode: ScaleMode,
+    control_rx: Option<&mpsc::Receiver<ControlCommand>>,
 ) -> Result<()> {
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
     let (globals, mut event_queue) =
@@ -401,11 +416,20 @@ pub fn run_video_background_surface(
         fps_limit,
         "video-native loop started"
     );
+    let mut paused = false;
 
     while state.running {
         let frame_start = Instant::now();
+        process_control(control_rx, &mut state.running, &mut paused);
+        if !state.running {
+            break;
+        }
         if let Err(err) = event_queue.dispatch_pending(&mut state) {
             error!(error = %err, "wayland event dispatch failed in video mode");
+        }
+        if paused {
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
         }
 
         if frame_start >= next_frame_deadline {
@@ -495,6 +519,35 @@ pub fn run_video_background_surface(
     }
 
     Ok(())
+}
+
+fn process_control(
+    control_rx: Option<&mpsc::Receiver<ControlCommand>>,
+    running: &mut bool,
+    paused: &mut bool,
+) {
+    let Some(rx) = control_rx else {
+        return;
+    };
+
+    loop {
+        match rx.try_recv() {
+            Ok(ControlCommand::Stop) => {
+                *running = false;
+            }
+            Ok(ControlCommand::Pause) => {
+                *paused = true;
+            }
+            Ok(ControlCommand::Resume) => {
+                *paused = false;
+            }
+            Ok(ControlCommand::Reload) => {
+                *running = false;
+            }
+            Err(mpsc::TryRecvError::Empty) => break,
+            Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+    }
 }
 
 pub fn probe_layer_shell_support() -> Result<bool> {

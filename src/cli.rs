@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "we-layerd", version, about = "Wallpaper Engine layer daemon")]
@@ -25,4 +25,17 @@ pub enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Send control command to a running daemon
+    Ctl {
+        #[arg(value_enum)]
+        action: ControlAction,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ControlAction {
+    Stop,
+    Pause,
+    Resume,
+    Reload,
 }

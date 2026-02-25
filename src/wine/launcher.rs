@@ -1,5 +1,5 @@
 use std::{
-    io,
+    fs, io,
     os::unix::process::CommandExt,
     path::Path,
     process::{Child, Command, Stdio},
@@ -27,6 +27,7 @@ impl WineProcessHandle {
         let child = spawn_child(config)?;
         let pgid = child.id() as i32;
         info!(pid = child.id(), pgid, "spawned wine wallpaper process");
+        suppress_bootstrap_windows(pgid);
         Ok(Self {
             child: Arc::new(Mutex::new(Some(child))),
             pgid: Arc::new(Mutex::new(Some(pgid))),
@@ -84,6 +85,7 @@ impl WineProcessHandle {
                                             pgid = new_pgid,
                                             "restarted wine process"
                                         );
+                                        suppress_bootstrap_windows(new_pgid);
                                         if let Ok(mut pgid_guard) = pgid.lock() {
                                             *pgid_guard = Some(new_pgid);
                                         }
@@ -213,4 +215,39 @@ fn signal_process_group(pgid: i32, signal: i32) -> Result<bool> {
         return Ok(false);
     }
     Err(err).with_context(|| format!("failed to send signal {} to process group {}", signal, pgid))
+}
+
+fn suppress_bootstrap_windows(pgid: i32) {
+    std::thread::spawn(move || {
+        let names = ["explorer.exe", "ui32.exe"];
+        for _ in 0..40 {
+            let _ = kill_named_processes_in_group(pgid, &names);
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    });
+}
+
+fn kill_named_processes_in_group(pgid: i32, names: &[&str]) -> Result<()> {
+    let entries = fs::read_dir("/proc").context("failed to read /proc")?;
+    for entry in entries.flatten() {
+        let Some(pid_str) = entry.file_name().to_str().map(ToString::to_string) else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<i32>() else {
+            continue;
+        };
+        let child_pgid = unsafe { libc::getpgid(pid) };
+        if child_pgid != pgid {
+            continue;
+        }
+        let cmdline_path = format!("/proc/{pid}/cmdline");
+        let Ok(raw) = fs::read(&cmdline_path) else {
+            continue;
+        };
+        let cmd = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+        if names.iter().any(|n| cmd.contains(n)) {
+            let _ = unsafe { libc::kill(pid, libc::SIGTERM) };
+        }
+    }
+    Ok(())
 }

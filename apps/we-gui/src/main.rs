@@ -20,6 +20,7 @@ use we_core::{
 };
 
 mod settings_panel;
+mod tray;
 
 fn main() -> iced::Result {
     iced::application("we-gui", update, view).subscription(subscription).run_with(App::init)
@@ -39,6 +40,7 @@ struct App {
     show_settings: bool,
     supported_resolutions: Vec<ResolutionOption>,
     install_notice: Option<String>,
+    tray: Option<tray::TrayController>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +61,8 @@ enum Message {
     ShowFpsToggled(bool),
     ResolutionSelected(settings_panel::ResolutionOption),
     WindowResized(Size),
+    TrayTick,
+    TrayAction(tray::TrayAction),
 }
 
 fn update(app: &mut App, message: Message) -> Task<Message> {
@@ -92,15 +96,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::PlayPressed => {
-            if let Some(child) = app.runtime_child.as_mut() {
-                if let Ok(Some(_)) = child.try_wait() {
-                    app.runtime_child = None;
-                }
-            }
-
-            if app.runtime_child.is_some() {
-                return Task::none();
-            }
+            stop_runtime(app);
 
             if !app.layerd_available {
                 return Task::none();
@@ -118,9 +114,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::StopPressed => {
-            if let Some(mut child) = app.runtime_child.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+            if !stop_runtime(app) {
+                let _ = send_layerd_ctl("stop");
             }
             Task::none()
         }
@@ -190,6 +185,30 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.viewport_width = size.width;
             Task::none()
         }
+        Message::TrayTick => {
+            if let Some(tray) = app.tray.as_mut() {
+                if let Some(action) = tray.poll_action() {
+                    return Task::done(Message::TrayAction(action));
+                }
+            }
+            Task::none()
+        }
+        Message::TrayAction(action) => match action {
+            tray::TrayAction::PlaySwitch => Task::done(Message::PlayPressed),
+            tray::TrayAction::Stop => Task::done(Message::StopPressed),
+            tray::TrayAction::Pause => {
+                let _ = send_layerd_ctl("pause");
+                Task::none()
+            }
+            tray::TrayAction::Resume => {
+                let _ = send_layerd_ctl("resume");
+                Task::none()
+            }
+            tray::TrayAction::Quit => {
+                let _ = stop_runtime(app);
+                std::process::exit(0);
+            }
+        },
     }
 }
 
@@ -295,7 +314,10 @@ fn wallpaper_type_name(ty: WallpaperType) -> &'static str {
 }
 
 fn subscription(_app: &App) -> Subscription<Message> {
-    window::resize_events().map(|(_id, size)| Message::WindowResized(size))
+    Subscription::batch(vec![
+        window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
+        iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::TrayTick),
+    ])
 }
 
 impl App {
@@ -349,6 +371,7 @@ impl App {
                 show_settings: false,
                 supported_resolutions,
                 install_notice,
+                tray: tray::TrayController::new().ok(),
             },
             Task::done(Message::AutoScan),
         )
@@ -357,10 +380,8 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        if let Some(mut child) = self.runtime_child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        let _ = stop_runtime(self);
+        let _ = send_layerd_ctl("stop");
     }
 }
 
@@ -533,4 +554,17 @@ fn command_exists_in_path(name: &str) -> bool {
     }
 
     false
+}
+
+fn stop_runtime(app: &mut App) -> bool {
+    if let Some(mut child) = app.runtime_child.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return true;
+    }
+    false
+}
+
+fn send_layerd_ctl(action: &str) -> bool {
+    Command::new("we-layerd").arg("ctl").arg(action).status().map(|s| s.success()).unwrap_or(false)
 }

@@ -5,17 +5,21 @@ use tracing::{info, warn};
 
 use crate::{
     config::{Config, RuntimeMode},
+    ipc::{self, ControlCommand},
     wayland,
     wine::launcher::WineProcessHandle,
     x11::{capture_xcomposite, window_finder},
 };
+use std::sync::mpsc;
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
+    let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
+    let _control_server = ipc::ControlServer::start(control_tx)?;
 
     if let Some(runtime) = &cfg.runtime {
         if runtime.mode == RuntimeMode::VideoNative {
-            return run_video_native(runtime.video_file.as_deref(), &cfg);
+            return run_video_native(runtime.video_file.as_deref(), &cfg, &control_rx);
         }
     }
 
@@ -49,20 +53,27 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         }
     };
 
-    wayland::layer_shell::run_single_background_surface(wayland::layer_shell::LayerRunConfig {
-        capture_window,
-        output_window_map: cfg.capture.output_window_map.clone(),
-        fps_limit: cfg.general.fps_limit,
-        show_fps: cfg.general.show_fps,
-        fps_report_interval_secs: cfg.general.fps_report_interval_secs,
-        scale_mode: cfg.general.scale_mode,
-        auto_refind_window: cfg.general.refind_window_on_capture_error,
-        capture_match,
-        wine_pid,
-    })
+    wayland::layer_shell::run_single_background_surface(
+        wayland::layer_shell::LayerRunConfig {
+            capture_window,
+            output_window_map: cfg.capture.output_window_map.clone(),
+            fps_limit: cfg.general.fps_limit,
+            show_fps: cfg.general.show_fps,
+            fps_report_interval_secs: cfg.general.fps_report_interval_secs,
+            scale_mode: cfg.general.scale_mode,
+            auto_refind_window: cfg.general.refind_window_on_capture_error,
+            capture_match,
+            wine_pid,
+        },
+        Some(&control_rx),
+    )
 }
 
-fn run_video_native(video_file: Option<&str>, cfg: &Config) -> Result<()> {
+fn run_video_native(
+    video_file: Option<&str>,
+    cfg: &Config,
+    control_rx: &mpsc::Receiver<ControlCommand>,
+) -> Result<()> {
     let video = video_file
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow!("runtime.video_file is required when runtime.mode=video_native"))?;
@@ -74,6 +85,7 @@ fn run_video_native(video_file: Option<&str>, cfg: &Config) -> Result<()> {
         cfg.general.show_fps,
         cfg.general.fps_report_interval_secs,
         cfg.general.scale_mode,
+        Some(control_rx),
     )
 }
 

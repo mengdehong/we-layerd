@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod config;
+mod ipc;
 mod logging;
 mod video;
 mod wayland;
@@ -9,7 +10,8 @@ mod x11;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Command};
+use cli::{Cli, Command, ControlAction};
+use ipc::ControlCommand;
 
 fn main() -> Result<()> {
     logging::init();
@@ -22,6 +24,15 @@ fn main() -> Result<()> {
             let cfg = config::Config::load(config.as_deref())?;
             println!("{}", cfg.to_toml_pretty()?);
             Ok(())
+        }
+        Command::Ctl { action } => {
+            let cmd = match action {
+                ControlAction::Stop => ControlCommand::Stop,
+                ControlAction::Pause => ControlCommand::Pause,
+                ControlAction::Resume => ControlCommand::Resume,
+                ControlAction::Reload => ControlCommand::Reload,
+            };
+            ipc::send_command(cmd)
         }
     }
 }
