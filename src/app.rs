@@ -1,6 +1,7 @@
-use std::{env, path::Path};
+use std::path::Path;
 
 use anyhow::{anyhow, Result};
+use libmpv::{events::Event, FileState, Mpv};
 use tracing::{info, warn};
 
 use crate::{
@@ -67,22 +68,31 @@ fn run_video_native(video_file: Option<&str>) -> Result<()> {
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow!("runtime.video_file is required when runtime.mode=video_native"))?;
 
-    if !command_exists_in_path("mpvpaper") {
-        return Err(anyhow!(
-            "runtime.mode=video_native requires mpvpaper in PATH"
-        ));
-    }
+    info!(video, "starting native video mode via libmpv");
+    let mpv = Mpv::new().map_err(|e| anyhow!("libmpv init failed: {e:?}"))?;
+    mpv.set_property("terminal", false)
+        .map_err(|e| anyhow!("libmpv set_property terminal failed: {e:?}"))?;
+    mpv.set_property("audio", "no")
+        .map_err(|e| anyhow!("libmpv set_property audio failed: {e:?}"))?;
+    mpv.set_property("loop-file", "inf")
+        .map_err(|e| anyhow!("libmpv set_property loop-file failed: {e:?}"))?;
+    mpv.playlist_load_files(&[(video, FileState::Replace, None)])
+        .map_err(|e| anyhow!("libmpv playlist load failed: {e:?}"))?;
 
-    info!(video, "starting native video mode via mpvpaper (layer-shell)");
-    let status = std::process::Command::new("mpvpaper")
-        .arg("-o")
-        .arg("no-audio loop-file=inf")
-        .arg("*")
-        .arg(video)
-        .status()?;
+    let mut events = mpv.create_event_context();
+    events
+        .disable_deprecated_events()
+        .map_err(|e| anyhow!("libmpv disable_deprecated_events failed: {e:?}"))?;
 
-    if !status.success() {
-        return Err(anyhow!("mpvpaper exited with status: {}", status));
+    loop {
+        match events.wait_event(30.0) {
+            Some(Ok(Event::Shutdown)) => break,
+            Some(Ok(_)) => {}
+            Some(Err(err)) => {
+                warn!(error = ?err, "libmpv event loop error");
+            }
+            None => {}
+        }
     }
 
     Ok(())
@@ -113,18 +123,4 @@ pub fn doctor() -> Result<()> {
 fn extract_play_in_window_hint(args: &[String]) -> Option<String> {
     let idx = args.iter().position(|arg| arg == "-playInWindow")?;
     args.get(idx + 1).cloned().filter(|s| !s.trim().is_empty())
-}
-
-fn command_exists_in_path(name: &str) -> bool {
-    let Some(path_os) = env::var_os("PATH") else {
-        return false;
-    };
-
-    for dir in env::split_paths(&path_os) {
-        if dir.join(name).is_file() {
-            return true;
-        }
-    }
-
-    false
 }
