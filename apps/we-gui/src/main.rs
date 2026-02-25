@@ -2,6 +2,7 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::{Child, Command},
+    time::Duration,
 };
 
 use iced::{
@@ -194,10 +195,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.viewport_width = size.width;
             Task::none()
         }
-        Message::WindowCloseRequested(id) => Task::batch(vec![
-            window::change_mode(id, window::Mode::Hidden),
-            window::minimize(id, true),
-        ]),
+        Message::WindowCloseRequested(id) => window::change_mode(id, window::Mode::Hidden),
         Message::WindowOpened(id) => {
             app.main_window_id = Some(id);
             Task::none()
@@ -238,7 +236,6 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             tray::TrayAction::Quit => {
                 let _ = stop_runtime(app);
-                let _ = send_layerd_ctl("stop");
                 std::process::exit(0);
             }
         },
@@ -419,7 +416,6 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         let _ = stop_runtime(self);
-        let _ = send_layerd_ctl("stop");
     }
 }
 
@@ -621,10 +617,19 @@ fn command_exists_in_path(name: &str) -> bool {
 
 fn stop_runtime(app: &mut App) -> bool {
     if let Some(mut child) = app.runtime_child.take() {
+        let _ = send_layerd_ctl("stop");
+        for _ in 0..30 {
+            match child.try_wait() {
+                Ok(Some(_)) => return true,
+                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Err(_) => break,
+            }
+        }
         let _ = child.kill();
         let _ = child.wait();
         return true;
     }
+    let _ = send_layerd_ctl("stop");
     false
 }
 
