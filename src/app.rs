@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use tracing::{info, warn};
 
 use crate::{
-    config::Config,
+    config::{Config, RuntimeMode},
     wayland,
     wine::launcher::WineProcessHandle,
     x11::{capture_xcomposite, window_finder},
@@ -12,6 +12,13 @@ use crate::{
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
+
+    if let Some(runtime) = &cfg.runtime {
+        if runtime.mode == RuntimeMode::VideoNative {
+            return run_video_native(runtime.video_file.as_deref());
+        }
+    }
+
     let mut capture_match = cfg.capture.clone();
     if capture_match.title_contains.is_none() {
         if let Some(title_hint) = extract_play_in_window_hint(&cfg.wine.args) {
@@ -53,6 +60,26 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         capture_match,
         wine_pid,
     })
+}
+
+fn run_video_native(video_file: Option<&str>) -> Result<()> {
+    let video = video_file
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow!("runtime.video_file is required when runtime.mode=video_native"))?;
+
+    info!(video, "starting native video mode via mpv");
+    let status = std::process::Command::new("mpv")
+        .arg("--loop=inf")
+        .arg("--no-terminal")
+        .arg("--no-input-default-bindings")
+        .arg(video)
+        .status()?;
+
+    if !status.success() {
+        return Err(anyhow!("mpv exited with status: {}", status));
+    }
+
+    Ok(())
 }
 
 pub fn doctor() -> Result<()> {

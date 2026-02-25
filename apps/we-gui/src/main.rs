@@ -6,7 +6,7 @@ use std::{
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{button, checkbox, column, container, image, row, scrollable, slider, stack, svg, text, text_input},
+    widget::{button, checkbox, column, container, image, row, scrollable, stack, svg, text, text_input},
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
 use we_core::{
@@ -46,8 +46,7 @@ enum Message {
     SettingsPressed,
     WallpaperExeChanged(String),
     WorkshopPathChanged(String),
-    WineCommandChanged(String),
-    FpsLimitChanged(u32),
+    FpsLimitChanged(String),
     ShowFpsToggled(bool),
     WidthChanged(String),
     HeightChanged(String),
@@ -62,8 +61,7 @@ enum Message {
 struct UiSettings {
     wallpaper_exe: String,
     workshop_path: String,
-    wine_command: String,
-    fps_limit: u32,
+    fps_limit: String,
     show_fps: bool,
     width: String,
     height: String,
@@ -166,11 +164,6 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::WorkshopPathChanged(value) => {
             app.ui_settings.workshop_path = value;
-            Task::none()
-        }
-        Message::WineCommandChanged(value) => {
-            app.ui_settings.wine_command = value;
-            sync_launch_settings(app);
             Task::none()
         }
         Message::FpsLimitChanged(value) => {
@@ -333,8 +326,7 @@ impl App {
         let ui_settings = UiSettings {
             wallpaper_exe: launch_settings.wallpaper_exe.clone(),
             workshop_path,
-            wine_command: launch_settings.wine_command.clone(),
-            fps_limit: launch_settings.fps_limit,
+            fps_limit: launch_settings.fps_limit.to_string(),
             show_fps: launch_settings.show_fps,
             width: launch_settings.width.to_string(),
             height: launch_settings.height.to_string(),
@@ -486,16 +478,9 @@ fn build_settings_overlay(app: &App) -> Element<'_, Message> {
             text_input("Workshop wallpapers path", &app.ui_settings.workshop_path)
                 .on_input(Message::WorkshopPathChanged)
                 .padding(10),
-            text_input("Wine command", &app.ui_settings.wine_command)
-                .on_input(Message::WineCommandChanged)
+            text_input("FPS Limit", &app.ui_settings.fps_limit)
+                .on_input(Message::FpsLimitChanged)
                 .padding(10),
-            row![
-                text("FPS Limit"),
-                slider(15..=144, app.ui_settings.fps_limit, Message::FpsLimitChanged),
-                text(app.ui_settings.fps_limit.to_string())
-            ]
-            .spacing(10)
-            .align_y(Vertical::Center),
             checkbox("Show realtime FPS", app.ui_settings.show_fps).on_toggle(Message::ShowFpsToggled),
             row![
                 text_input("Width", &app.ui_settings.width).on_input(Message::WidthChanged).padding(8),
@@ -541,12 +526,13 @@ fn build_settings_overlay(app: &App) -> Element<'_, Message> {
 
 fn sync_launch_settings(app: &mut App) {
     app.launch_settings.wallpaper_exe = app.ui_settings.wallpaper_exe.clone();
-    app.launch_settings.wine_command = app.ui_settings.wine_command.clone();
-    app.launch_settings.fps_limit = app.ui_settings.fps_limit;
     app.launch_settings.show_fps = app.ui_settings.show_fps;
     app.launch_settings.play_in_window_title = app.ui_settings.window_title.clone();
     app.launch_settings.wm_class_contains = app.ui_settings.wm_class.clone();
 
+    if let Ok(v) = app.ui_settings.fps_limit.parse::<u32>() {
+        app.launch_settings.fps_limit = v.clamp(1, 360);
+    }
     if let Ok(v) = app.ui_settings.width.parse::<u32>() {
         app.launch_settings.width = v;
     }

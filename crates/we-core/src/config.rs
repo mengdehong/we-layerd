@@ -59,6 +59,7 @@ pub struct CaptureConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     pub mode: RuntimeMode,
+    pub wallpaper_type: RuntimeWallpaperType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_file: Option<String>,
 }
@@ -70,10 +71,18 @@ pub enum RuntimeMode {
     WineLayerd,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeWallpaperType {
+    Video,
+    Scene,
+    Web,
+    Unknown,
+}
+
 #[derive(Debug, Clone)]
 pub struct LaunchSettings {
     pub wallpaper_exe: String,
-    pub wine_command: String,
     pub fps_limit: u32,
     pub show_fps: bool,
     pub width: u32,
@@ -88,7 +97,6 @@ impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
             wallpaper_exe: String::new(),
-            wine_command: "wine".to_string(),
             fps_limit: 30,
             show_fps: false,
             width: 2560,
@@ -150,7 +158,7 @@ pub fn build_config(
 
     cfg.general.fps_limit = settings.fps_limit;
     cfg.general.show_fps = settings.show_fps;
-    cfg.wine.command = settings.wine_command.clone();
+    cfg.wine.command = "wine".to_string();
     cfg.wine.wallpaper_exe = settings.wallpaper_exe.clone();
     cfg.capture.wm_class_contains = settings.wm_class_contains.clone();
     cfg.capture.title_contains = settings.play_in_window_title.clone();
@@ -161,13 +169,61 @@ pub fn build_config(
             cfg.general.refind_window_on_capture_error = false;
             cfg.runtime = Some(RuntimeConfig {
                 mode: RuntimeMode::VideoNative,
+                wallpaper_type: RuntimeWallpaperType::Video,
                 video_file: video_file.map(|p| p.display().to_string()),
             });
             cfg.wine.args.clear();
         }
-        _ => {
+        WallpaperType::Scene => {
             cfg.runtime = Some(RuntimeConfig {
                 mode: RuntimeMode::WineLayerd,
+                wallpaper_type: RuntimeWallpaperType::Scene,
+                video_file: None,
+            });
+            cfg.wine.args = vec![
+                "-control".to_string(),
+                "openWallpaper".to_string(),
+                "-file".to_string(),
+                project_json.display().to_string(),
+                "-playInWindow".to_string(),
+                settings.play_in_window_title.clone(),
+                "-width".to_string(),
+                settings.width.to_string(),
+                "-height".to_string(),
+                settings.height.to_string(),
+                "-x".to_string(),
+                settings.x.to_string(),
+                "-y".to_string(),
+                settings.y.to_string(),
+            ];
+        }
+        WallpaperType::Web => {
+            cfg.runtime = Some(RuntimeConfig {
+                mode: RuntimeMode::WineLayerd,
+                wallpaper_type: RuntimeWallpaperType::Web,
+                video_file: None,
+            });
+            cfg.wine.args = vec![
+                "-control".to_string(),
+                "openWallpaper".to_string(),
+                "-file".to_string(),
+                project_json.display().to_string(),
+                "-playInWindow".to_string(),
+                settings.play_in_window_title.clone(),
+                "-width".to_string(),
+                settings.width.to_string(),
+                "-height".to_string(),
+                settings.height.to_string(),
+                "-x".to_string(),
+                settings.x.to_string(),
+                "-y".to_string(),
+                settings.y.to_string(),
+            ];
+        }
+        WallpaperType::Unknown => {
+            cfg.runtime = Some(RuntimeConfig {
+                mode: RuntimeMode::WineLayerd,
+                wallpaper_type: RuntimeWallpaperType::Unknown,
                 video_file: None,
             });
             cfg.wine.args = vec![

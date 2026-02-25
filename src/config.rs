@@ -11,6 +11,8 @@ pub struct Config {
     pub wine: WineConfig,
     #[serde(default)]
     pub capture: CaptureConfig,
+    #[serde(default)]
+    pub runtime: Option<RuntimeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +69,44 @@ pub struct CaptureConfig {
     pub output_window_map: BTreeMap<String, u32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeConfig {
+    #[serde(default)]
+    pub mode: RuntimeMode,
+    #[serde(default)]
+    pub wallpaper_type: RuntimeWallpaperType,
+    #[serde(default)]
+    pub video_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMode {
+    VideoNative,
+    WineLayerd,
+}
+
+impl Default for RuntimeMode {
+    fn default() -> Self {
+        Self::WineLayerd
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeWallpaperType {
+    Video,
+    Scene,
+    Web,
+    Unknown,
+}
+
+impl Default for RuntimeWallpaperType {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
 fn default_fps() -> u32 {
     30
 }
@@ -93,6 +133,7 @@ impl Default for Config {
             general: GeneralConfig::default(),
             wine: WineConfig::default(),
             capture: CaptureConfig::default(),
+            runtime: None,
         }
     }
 }

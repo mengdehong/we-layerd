@@ -23,3 +23,7 @@ wm_class_contains = "wallpaper64"
 title_contains = "WE-DEBUG-WINDOW"
 
 [capture.output_window_map]
+
+[runtime]
+mode = "wine_layerd"
+wallpaper_type = "scene"

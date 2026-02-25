@@ -19,3 +19,8 @@ wm_class_contains = "wallpaper"
 
 [capture.output_window_map]
 # "output-42" = 123456
+
+[runtime]
+mode = "wine_layerd"
+wallpaper_type = "scene"
+# video_file = "/path/to/video.mp4"
