@@ -17,6 +17,18 @@
 cargo build
 ```
 
+Workspace targets:
+```bash
+# core library
+cargo build -p we-core
+
+# GUI app (cross-platform dev target)
+cargo run -p we-gui
+
+# daemon
+cargo run -p we-layerd -- run --config ./config.toml
+```
+
 ## Runtime dependencies
 - Wayland compositor with `zwlr_layer_shell_v1` (target: niri; should also work on Hyprland/sway).
 - XWayland/X11 for Wine render window capture.
