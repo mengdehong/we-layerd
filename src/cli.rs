@@ -38,5 +38,5 @@ pub enum ControlAction {
     Pause,
     Resume,
     Reload,
-    ShowConfig,
+    Status,
 }

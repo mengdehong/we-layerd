@@ -31,7 +31,7 @@ fn main() -> Result<()> {
                 ControlAction::Pause => ipc::send_command(ControlCommand::Pause),
                 ControlAction::Resume => ipc::send_command(ControlCommand::Resume),
                 ControlAction::Reload => ipc::send_command(ControlCommand::Reload),
-                ControlAction::ShowConfig => {
+                ControlAction::Status => {
                     println!("{}", ipc::request_running_config()?);
                     Ok(())
                 }

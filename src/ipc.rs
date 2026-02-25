@@ -47,14 +47,14 @@ impl ControlCommand {
 #[derive(Debug, Clone)]
 enum ControlRequest {
     Command(ControlCommand),
-    ShowConfig,
+    Status,
 }
 
 impl ControlRequest {
     fn parse(raw: &str) -> Option<Self> {
         let normalized = raw.trim().to_ascii_lowercase();
-        if normalized == "show-config" {
-            return Some(Self::ShowConfig);
+        if normalized == "status" || normalized == "show-config" {
+            return Some(Self::Status);
         }
         ControlCommand::parse(&normalized).map(Self::Command)
     }
@@ -85,7 +85,7 @@ impl ControlServer {
                     continue;
                 };
                 match request {
-                    ControlRequest::ShowConfig => {
+                    ControlRequest::Status => {
                         let _ = stream.write_all(running_config_toml.as_bytes());
                     }
                     ControlRequest::Command(cmd) => {
@@ -123,7 +123,7 @@ pub fn send_command(command: ControlCommand) -> Result<()> {
 }
 
 pub fn request_running_config() -> Result<String> {
-    let response = send_request("show-config")?;
+    let response = send_request("status")?;
     if response.trim_start().starts_with("ERR") {
         return Err(anyhow!(response.trim().to_string()));
     }

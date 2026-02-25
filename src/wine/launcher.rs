@@ -15,11 +15,22 @@ use tracing::{info, warn};
 
 use crate::config::WineConfig;
 
-#[derive(Clone)]
 pub struct WineProcessHandle {
     child: Arc<Mutex<Option<Child>>>,
     pgid: Arc<Mutex<Option<i32>>>,
     stop: Arc<AtomicBool>,
+    owner: bool,
+}
+
+impl Clone for WineProcessHandle {
+    fn clone(&self) -> Self {
+        Self {
+            child: self.child.clone(),
+            pgid: self.pgid.clone(),
+            stop: self.stop.clone(),
+            owner: false,
+        }
+    }
 }
 
 impl WineProcessHandle {
@@ -32,6 +43,7 @@ impl WineProcessHandle {
             child: Arc::new(Mutex::new(Some(child))),
             pgid: Arc::new(Mutex::new(Some(pgid))),
             stop: Arc::new(AtomicBool::new(false)),
+            owner: true,
         })
     }
 
@@ -147,7 +159,7 @@ impl WineProcessHandle {
 
 impl Drop for WineProcessHandle {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.child) > 1 {
+        if !self.owner {
             return;
         }
 
