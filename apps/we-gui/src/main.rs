@@ -194,7 +194,10 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.viewport_width = size.width;
             Task::none()
         }
-        Message::WindowCloseRequested(id) => window::change_mode(id, window::Mode::Hidden),
+        Message::WindowCloseRequested(id) => Task::batch(vec![
+            window::change_mode(id, window::Mode::Hidden),
+            window::minimize(id, true),
+        ]),
         Message::WindowOpened(id) => {
             app.main_window_id = Some(id);
             Task::none()

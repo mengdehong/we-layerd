@@ -217,17 +217,18 @@ fn signal_process_group(pgid: i32, signal: i32) -> Result<bool> {
     Err(err).with_context(|| format!("failed to send signal {} to process group {}", signal, pgid))
 }
 
-fn suppress_bootstrap_windows(root_pid: i32) {
+fn suppress_bootstrap_windows(_root_pid: i32) {
     std::thread::spawn(move || {
         let names = ["explorer.exe", "ui32.exe"];
         for _ in 0..40 {
-            let _ = kill_named_descendant_processes(root_pid, &names);
+            let _ = kill_named_processes_for_current_user(&names);
             std::thread::sleep(Duration::from_millis(500));
         }
     });
 }
 
-fn kill_named_descendant_processes(root_pid: i32, names: &[&str]) -> Result<()> {
+fn kill_named_processes_for_current_user(names: &[&str]) -> Result<()> {
+    let uid = unsafe { libc::geteuid() };
     let entries = fs::read_dir("/proc").context("failed to read /proc")?;
     for entry in entries.flatten() {
         let Some(pid_str) = entry.file_name().to_str().map(ToString::to_string) else {
@@ -236,10 +237,7 @@ fn kill_named_descendant_processes(root_pid: i32, names: &[&str]) -> Result<()> 
         let Ok(pid) = pid_str.parse::<i32>() else {
             continue;
         };
-        if pid == root_pid {
-            continue;
-        }
-        if !is_descendant_of(pid, root_pid) {
+        if !is_process_owned_by_uid(pid, uid) {
             continue;
         }
         let cmdline_path = format!("/proc/{pid}/cmdline");
@@ -252,35 +250,23 @@ fn kill_named_descendant_processes(root_pid: i32, names: &[&str]) -> Result<()> 
             fs::read_to_string(&comm_path).ok().map(|s| s.to_ascii_lowercase()).unwrap_or_default();
         if names.iter().any(|n| cmd.contains(n) || comm.contains(n)) {
             let _ = unsafe { libc::kill(pid, libc::SIGTERM) };
+            std::thread::sleep(Duration::from_millis(60));
+            let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
         }
     }
     Ok(())
 }
 
-fn is_descendant_of(pid: i32, root_pid: i32) -> bool {
-    let mut current = pid;
-    for _ in 0..64 {
-        let Some(ppid) = read_ppid(current) else {
-            return false;
-        };
-        if ppid == root_pid {
-            return true;
+fn is_process_owned_by_uid(pid: i32, uid: u32) -> bool {
+    let status_path = format!("/proc/{pid}/status");
+    let Ok(raw) = fs::read_to_string(status_path) else {
+        return false;
+    };
+    for line in raw.lines() {
+        if let Some(rest) = line.strip_prefix("Uid:") {
+            let real_uid = rest.split_whitespace().next().and_then(|n| n.parse::<u32>().ok());
+            return real_uid == Some(uid);
         }
-        if ppid <= 1 || ppid == current {
-            return false;
-        }
-        current = ppid;
     }
     false
-}
-
-fn read_ppid(pid: i32) -> Option<i32> {
-    let status_path = format!("/proc/{pid}/status");
-    let raw = fs::read_to_string(status_path).ok()?;
-    for line in raw.lines() {
-        if let Some(rest) = line.strip_prefix("PPid:") {
-            return rest.trim().parse::<i32>().ok();
-        }
-    }
-    None
 }
