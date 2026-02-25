@@ -5,8 +5,9 @@ use std::{
 };
 
 use iced::{
-    widget::{button, column, container, image, row, scrollable, text},
-    Element, Fill, Task,
+    alignment::{Horizontal, Vertical},
+    widget::{button, column, container, image, row, scrollable, stack, text},
+    window, Background, Border, Color, Element, Fill, Size, Subscription, Task, Theme,
 };
 use we_core::{
     steam,
@@ -14,15 +15,17 @@ use we_core::{
 };
 
 fn main() -> iced::Result {
-    iced::application("we-gui", update, view).run_with(App::init)
+    iced::application("we-gui", update, view)
+        .subscription(subscription)
+        .run_with(App::init)
 }
 
 struct App {
-    status: String,
     entries: Vec<WallpaperEntry>,
     selected_id: Option<String>,
     config_path: PathBuf,
     layerd_child: Option<Child>,
+    viewport_width: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -32,24 +35,20 @@ enum Message {
     SelectWallpaper(usize),
     PlayPressed,
     SettingsPressed,
+    WindowResized(Size),
 }
 
 fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::AutoScan => {
-            app.status = "Scanning workshop wallpapers...".to_string();
             Task::perform(scan_wallpapers(), Message::Scanned)
         }
         Message::Scanned(result) => match result {
             Ok(entries) => {
-                app.status = format!("Found {} wallpapers", entries.len());
                 app.entries = entries;
                 Task::none()
             }
-            Err(err) => {
-                app.status = format!("Scan failed: {err}");
-                Task::none()
-            }
+            Err(_err) => Task::none(),
         }
         Message::SelectWallpaper(index) => {
             let Some(entry) = app.entries.get(index).cloned() else {
@@ -57,19 +56,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             };
 
             app.selected_id = Some(entry.id.clone());
-            match write_config_for_wallpaper(&app.config_path, &entry.project_json) {
-                Ok(()) => {
-                    app.status = format!(
-                        "Selected [{}] {}. Config updated: {}",
-                        entry.id,
-                        entry.title,
-                        app.config_path.display()
-                    );
-                }
-                Err(err) => {
-                    app.status = format!("Failed to update config: {err}");
-                }
-            }
+            let _ = write_config_for_wallpaper(&app.config_path, &entry.project_json);
             Task::none()
         }
         Message::PlayPressed => {
@@ -80,7 +67,6 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             }
 
             if app.layerd_child.is_some() {
-                app.status = "we-layerd is already running".to_string();
                 return Task::none();
             }
 
@@ -93,88 +79,44 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             match spawn {
                 Ok(child) => {
                     app.layerd_child = Some(child);
-                    app.status = format!("Started we-layerd with {}", app.config_path.display());
                 }
-                Err(err) => {
-                    app.status = format!("Failed to start we-layerd: {err}");
-                }
+                Err(_err) => {}
             }
             Task::none()
         }
-        Message::SettingsPressed => {
-            app.status = "Settings panel is not implemented yet".to_string();
+        Message::SettingsPressed => Task::none(),
+        Message::WindowResized(size) => {
+            app.viewport_width = size.width;
             Task::none()
         }
     }
 }
 
 fn view(app: &App) -> Element<'_, Message> {
-    let head = row![text("we-gui").size(28), text(&app.status)].spacing(12);
+    let grid = build_wallpaper_grid(&app.entries, app.selected_id.as_ref(), app.viewport_width);
 
-    let mut list = column!().spacing(8);
-    for (index, entry) in app.entries.iter().enumerate() {
-        let selected = app
-            .selected_id
-            .as_ref()
-            .map(|id| id == &entry.id)
-            .unwrap_or(false);
-
-        let preview_box: Element<'_, Message> = if let Some(path) = &entry.preview {
-            image(image::Handle::from_path(path))
-                .width(220)
-                .height(124)
-                .into()
-        } else {
-            container(text("No Preview"))
-                .width(220)
-                .height(124)
-                .center_x(Fill)
-                .center_y(Fill)
-                .into()
-        };
-
-        let card = column![
-            preview_box,
-            text(format!("{} [{}]", entry.title, wallpaper_type_name(entry.ty))).size(16),
-            text(entry.id.as_str()).size(13)
-        ]
-        .spacing(6);
-
-        let label = if selected {
-            format!("Selected • {}", entry.id)
-        } else {
-            format!("Use • {}", entry.id)
-        };
-
-        list = list.push(
-            container(
-                row![
-                    button(card).on_press(Message::SelectWallpaper(index)),
-                    button(text(label)).on_press(Message::SelectWallpaper(index))
-                ]
-                .spacing(10)
-            )
-            .padding(8),
-        );
-    }
-
-    let content = column![head, scrollable(list).height(Fill)].spacing(12);
+    let content = container(scrollable(grid).width(Fill).height(Fill))
+        .width(Fill)
+        .height(Fill);
 
     let floating = container(
-        row![
-            button(text("▶")).on_press(Message::PlayPressed),
-            button(text("⚙")).on_press(Message::SettingsPressed),
+        column![
+            button(text("⚙").size(24))
+                .style(material_icon_button_style)
+                .on_press(Message::SettingsPressed),
+            button(text("▶").size(26))
+                .style(material_icon_button_style)
+                .on_press(Message::PlayPressed),
         ]
-        .spacing(10),
+        .spacing(12),
     )
-    .align_x(iced::alignment::Horizontal::Right)
-    .align_y(iced::alignment::Vertical::Bottom);
+    .width(Fill)
+    .height(Fill)
+    .align_x(Horizontal::Right)
+    .align_y(Vertical::Bottom)
+    .padding(20);
 
-    container(column![content, floating].spacing(8))
-        .padding(16)
-        .center_x(Fill)
-        .center_y(Fill)
-        .into()
+    stack![content, floating].into()
 }
 
 async fn scan_wallpapers() -> Result<Vec<WallpaperEntry>, String> {
@@ -192,16 +134,20 @@ fn wallpaper_type_name(ty: WallpaperType) -> &'static str {
     }
 }
 
+fn subscription(_app: &App) -> Subscription<Message> {
+    window::resize_events().map(|(_id, size)| Message::WindowResized(size))
+}
+
 impl App {
     fn init() -> (Self, Task<Message>) {
         let config_path = steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
         (
             Self {
-                status: "Initializing...".to_string(),
                 entries: Vec::new(),
                 selected_id: None,
                 config_path,
                 layerd_child: None,
+                viewport_width: 1280.0,
             },
             Task::done(Message::AutoScan),
         )
@@ -257,4 +203,125 @@ title_contains = "WE-DEBUG-WINDOW"
     );
 
     fs::write(config_path, content).map_err(|e| e.to_string())
+}
+
+fn build_wallpaper_grid<'a>(
+    entries: &'a [WallpaperEntry],
+    selected_id: Option<&String>,
+    width: f32,
+) -> Element<'a, Message> {
+    let spacing = 12.0;
+    let card_width = 260.0;
+    let cols = ((width - spacing) / (card_width + spacing)).floor().max(1.0) as usize;
+
+    let mut root = column!().spacing(spacing as u16).padding(spacing as u16);
+
+    for (row_index, chunk) in entries.chunks(cols).enumerate() {
+        let mut r = row!().spacing(spacing as u16);
+        for (inner, entry) in chunk.iter().enumerate() {
+            let index = row_index * cols + inner;
+            let is_selected = selected_id.map(|id| id == &entry.id).unwrap_or(false);
+            r = r.push(make_wallpaper_card(entry, index, card_width, is_selected));
+        }
+        root = root.push(r);
+    }
+
+    root.into()
+}
+
+fn make_wallpaper_card<'a>(
+    entry: &'a WallpaperEntry,
+    index: usize,
+    card_width: f32,
+    is_selected: bool,
+) -> Element<'a, Message> {
+    let card_height = (card_width * 9.0 / 16.0).round();
+
+    let media: Element<'a, Message> = if let Some(path) = &entry.preview {
+        image(image::Handle::from_path(path))
+            .width(card_width)
+            .height(card_height)
+            .into()
+    } else {
+        container(text(""))
+            .width(card_width)
+            .height(card_height)
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(18, 18, 18))),
+                ..Default::default()
+            })
+            .into()
+    };
+
+    let chip = container(text(wallpaper_type_name(entry.ty)).size(12))
+        .padding([3, 8])
+        .style(|_theme: &Theme| container::Style {
+            text_color: Some(Color::WHITE),
+            background: Some(Background::Color(Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.45,
+            })),
+            border: Border {
+                radius: 10.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+    let chip_overlay = container(chip)
+        .width(Fill)
+        .height(Fill)
+        .align_x(Horizontal::Right)
+        .align_y(Vertical::Bottom)
+        .padding(8);
+
+    let composed = stack![media, chip_overlay];
+
+    let border_color = if is_selected {
+        Color::from_rgb8(255, 255, 255)
+    } else {
+        Color {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 0.1,
+        }
+    };
+
+    let frame = container(composed)
+        .width(card_width)
+        .height(card_height)
+        .style(move |_theme: &Theme| container::Style {
+            border: Border {
+                radius: 14.0.into(),
+                width: if is_selected { 2.0 } else { 1.0 },
+                color: border_color,
+            },
+            ..Default::default()
+        });
+
+    button(frame)
+        .on_press(Message::SelectWallpaper(index))
+        .style(image_card_button_style)
+        .into()
+}
+
+fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
+    button::Style {
+        background: None,
+        text_color: Color::WHITE,
+        border: Border::default(),
+        shadow: iced::Shadow::default(),
+    }
+}
+
+fn material_icon_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
+    button::Style {
+        background: None,
+        text_color: Color::WHITE,
+        border: Border::default(),
+        shadow: iced::Shadow::default(),
+    }
 }
