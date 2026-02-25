@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub capture: CaptureConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<RuntimeConfig>,
+    #[serde(default)]
+    pub cgroup: CgroupConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +82,23 @@ pub enum RuntimeWallpaperType {
     Unknown,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CgroupConfig {
+    pub enabled: bool,
+    pub mode: CgroupMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_max: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_max: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CgroupMode {
+    Detect,
+    LimitWine,
+}
+
 #[derive(Debug, Clone)]
 pub struct LaunchSettings {
     pub wallpaper_exe: String,
@@ -91,6 +110,10 @@ pub struct LaunchSettings {
     pub y: i32,
     pub play_in_window_title: String,
     pub wm_class_contains: String,
+    pub cgroup_enabled: bool,
+    pub cgroup_mode: CgroupMode,
+    pub cgroup_memory_max: Option<String>,
+    pub cgroup_cpu_max: Option<String>,
 }
 
 impl Default for LaunchSettings {
@@ -105,7 +128,17 @@ impl Default for LaunchSettings {
             y: 100,
             play_in_window_title: "WE-DEBUG-WINDOW".to_string(),
             wm_class_contains: "wallpaper64".to_string(),
+            cgroup_enabled: false,
+            cgroup_mode: CgroupMode::Detect,
+            cgroup_memory_max: None,
+            cgroup_cpu_max: None,
         }
+    }
+}
+
+impl Default for CgroupConfig {
+    fn default() -> Self {
+        Self { enabled: false, mode: CgroupMode::Detect, memory_max: None, cpu_max: None }
     }
 }
 
@@ -144,6 +177,7 @@ impl Default for AppConfig {
                 output_window_map: BTreeMap::new(),
             },
             runtime: None,
+            cgroup: CgroupConfig::default(),
         }
     }
 }
@@ -162,6 +196,10 @@ pub fn build_config(
     cfg.wine.wallpaper_exe = settings.wallpaper_exe.clone();
     cfg.capture.wm_class_contains = settings.wm_class_contains.clone();
     cfg.capture.title_contains = settings.play_in_window_title.clone();
+    cfg.cgroup.enabled = settings.cgroup_enabled;
+    cfg.cgroup.mode = settings.cgroup_mode;
+    cfg.cgroup.memory_max = settings.cgroup_memory_max.clone();
+    cfg.cgroup.cpu_max = settings.cgroup_cpu_max.clone();
 
     match wallpaper_type {
         WallpaperType::Video => {

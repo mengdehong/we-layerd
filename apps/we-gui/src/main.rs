@@ -11,11 +11,11 @@ use iced::{
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
 use settings_panel::{
-    build_settings_overlay, detect_supported_resolutions, pick_initial_resolution,
+    build_settings_overlay, detect_supported_resolutions, pick_initial_resolution, CgroupModeOption,
     ResolutionOption, UiSettings,
 };
 use we_core::{
-    config::{build_config, save_config, LaunchSettings},
+    config::{build_config, save_config, CgroupMode, LaunchSettings},
     steam::{self, WallpaperEngineInstallState},
     wallpaper::{self, WallpaperEntry, WallpaperType},
 };
@@ -67,6 +67,13 @@ enum Message {
     FpsLimitChanged(String),
     ShowFpsToggled(bool),
     ResolutionSelected(settings_panel::ResolutionOption),
+    CgroupEnabledToggled(bool),
+    CgroupModeSelected(CgroupModeOption),
+    CgroupMemoryMaxChanged(String),
+    CgroupCpuMaxChanged(String),
+    RefreshStatus,
+    StatusLoaded(Result<String, String>),
+    StatusTick,
     WindowResized(Size),
     WindowCloseRequested(window::Id),
     WindowOpened(window::Id),
@@ -132,6 +139,9 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::SettingsPressed => {
             app.show_settings = !app.show_settings;
+            if app.show_settings {
+                return Task::perform(fetch_runtime_status(), Message::StatusLoaded);
+            }
             Task::none()
         }
         Message::WallpaperExeChanged(value) => {
@@ -190,6 +200,40 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::ResolutionSelected(value) => {
             app.ui_settings.selected_resolution = Some(value);
             sync_launch_settings(app);
+            Task::none()
+        }
+        Message::CgroupEnabledToggled(value) => {
+            app.ui_settings.cgroup_enabled = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::CgroupModeSelected(value) => {
+            app.ui_settings.cgroup_mode = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::CgroupMemoryMaxChanged(value) => {
+            app.ui_settings.cgroup_memory_max = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::CgroupCpuMaxChanged(value) => {
+            app.ui_settings.cgroup_cpu_max = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::RefreshStatus => Task::perform(fetch_runtime_status(), Message::StatusLoaded),
+        Message::StatusLoaded(result) => {
+            app.ui_settings.status_text = match result {
+                Ok(text) => text,
+                Err(err) => format!("status unavailable: {err}"),
+            };
+            Task::none()
+        }
+        Message::StatusTick => {
+            if app.show_settings {
+                return Task::perform(fetch_runtime_status(), Message::StatusLoaded);
+            }
             Task::none()
         }
         Message::WindowResized(size) => {
@@ -354,6 +398,7 @@ fn subscription(_app: &App) -> Subscription<Message> {
         window::close_requests().map(Message::WindowCloseRequested),
         iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::TrayTick),
         iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::ThemeTick),
+        iced::time::every(std::time::Duration::from_secs(3)).map(|_| Message::StatusTick),
     ])
 }
 
@@ -392,6 +437,11 @@ impl App {
             fps_limit: launch_settings.fps_limit.to_string(),
             show_fps: launch_settings.show_fps,
             selected_resolution,
+            cgroup_enabled: false,
+            cgroup_mode: CgroupModeOption::Detect,
+            cgroup_memory_max: String::new(),
+            cgroup_cpu_max: String::new(),
+            status_text: "status unavailable: daemon is not running".to_string(),
         };
         (
             Self {
@@ -537,6 +587,41 @@ fn sync_launch_settings(app: &mut App) {
     if let Some(res) = &app.ui_settings.selected_resolution {
         app.launch_settings.width = res.width;
         app.launch_settings.height = res.height;
+    }
+    app.launch_settings.cgroup_enabled = app.ui_settings.cgroup_enabled;
+    app.launch_settings.cgroup_mode = match app.ui_settings.cgroup_mode {
+        CgroupModeOption::Detect => CgroupMode::Detect,
+        CgroupModeOption::LimitWine => CgroupMode::LimitWine,
+    };
+    app.launch_settings.cgroup_memory_max = non_empty_trimmed(&app.ui_settings.cgroup_memory_max);
+    app.launch_settings.cgroup_cpu_max = non_empty_trimmed(&app.ui_settings.cgroup_cpu_max);
+}
+
+async fn fetch_runtime_status() -> Result<String, String> {
+    let output = Command::new("we-layerd")
+        .arg("ctl")
+        .arg("status")
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if text.is_empty() {
+            Ok("status unavailable: daemon returned empty response".to_string())
+        } else {
+            Ok(text)
+        }
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+fn non_empty_trimmed(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 

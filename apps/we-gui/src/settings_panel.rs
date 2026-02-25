@@ -1,8 +1,8 @@
 use std::{env, fmt, process::Command};
 
 use iced::{
-    widget::{button, checkbox, column, container, pick_list, row, text, text_input},
-    Element, Fill,
+    widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
+    Background, Border, Color, Element, Fill, Theme,
 };
 
 use crate::Message;
@@ -26,6 +26,26 @@ pub struct UiSettings {
     pub fps_limit: String,
     pub show_fps: bool,
     pub selected_resolution: Option<ResolutionOption>,
+    pub cgroup_enabled: bool,
+    pub cgroup_mode: CgroupModeOption,
+    pub cgroup_memory_max: String,
+    pub cgroup_cpu_max: String,
+    pub status_text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CgroupModeOption {
+    Detect,
+    LimitWine,
+}
+
+impl fmt::Display for CgroupModeOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Detect => write!(f, "Detect (observe self + wine)"),
+            Self::LimitWine => write!(f, "Limit Wine only"),
+        }
+    }
 }
 
 pub fn build_settings_overlay<'a>(
@@ -35,7 +55,7 @@ pub fn build_settings_overlay<'a>(
     let wallpaper_path_display = format_path_for_display(&ui_settings.wallpaper_exe, 64);
     let workshop_path_display = format_path_for_display(&ui_settings.workshop_path, 64);
 
-    let card = container(
+    let card_content = scrollable(
         column![
             text("Settings").size(26),
             text("Wallpaper Engine Path").size(14),
@@ -73,13 +93,52 @@ pub fn build_settings_overlay<'a>(
             )
             .placeholder("Choose a resolution")
             .padding(10),
+            text("Cgroup").size(18),
+            checkbox(ui_settings.cgroup_enabled)
+                .label("Enable cgroup metrics / limits")
+                .on_toggle(Message::CgroupEnabledToggled),
+            text("Cgroup Mode").size(14),
+            pick_list(
+                vec![CgroupModeOption::Detect, CgroupModeOption::LimitWine],
+                Some(ui_settings.cgroup_mode),
+                Message::CgroupModeSelected,
+            )
+            .padding(10),
+            text("Memory Limit (memory.max)").size(14),
+            text_input("e.g. 2147483648 or max", &ui_settings.cgroup_memory_max)
+                .on_input(Message::CgroupMemoryMaxChanged)
+                .padding(10),
+            text("CPU Limit (cpu.max)").size(14),
+            text_input("e.g. 50000 100000 or max 100000", &ui_settings.cgroup_cpu_max)
+                .on_input(Message::CgroupCpuMaxChanged)
+                .padding(10),
+            row![
+                text("Runtime Status").size(14),
+                button(text("Refresh")).on_press(Message::RefreshStatus),
+            ]
+            .spacing(10),
+            container(text(&ui_settings.status_text).size(12))
+                .width(Fill)
+                .padding(10)
+                .style(status_panel_style),
         ]
         .spacing(10),
-    )
-    .width(680)
-    .padding(16);
+    );
 
-    container(card).width(Fill).height(Fill).center_x(Fill).center_y(Fill).padding(20).into()
+    let card = container(card_content)
+        .width(760)
+        .height(620)
+        .padding(16)
+        .style(settings_card_style);
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .padding(20)
+        .style(settings_overlay_bg_style)
+        .into()
 }
 
 pub fn detect_supported_resolutions() -> Vec<ResolutionOption> {
@@ -162,4 +221,64 @@ fn format_path_for_display(path: &str, max_chars: usize) -> String {
     let tail: String =
         rendered.chars().rev().take(keep_tail).collect::<String>().chars().rev().collect();
     format!("{head}...{tail}")
+}
+
+fn settings_overlay_bg_style(theme: &Theme) -> container::Style {
+    let is_light = matches!(theme, Theme::Light);
+    container::Style {
+        background: Some(Background::Color(if is_light {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.45)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.45)
+        })),
+        ..Default::default()
+    }
+}
+
+fn settings_card_style(theme: &Theme) -> container::Style {
+    let is_light = matches!(theme, Theme::Light);
+    container::Style {
+        background: Some(Background::Color(if is_light {
+            Color::from_rgb8(247, 250, 255)
+        } else {
+            Color::from_rgb8(26, 30, 34)
+        })),
+        text_color: Some(if is_light { Color::from_rgb8(20, 27, 34) } else { Color::WHITE }),
+        border: Border {
+            radius: 16.0.into(),
+            width: 1.0,
+            color: if is_light {
+                Color::from_rgba8(58, 94, 132, 0.25)
+            } else {
+                Color::from_rgba8(180, 210, 255, 0.18)
+            },
+        },
+        shadow: iced::Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.25),
+            blur_radius: 18.0,
+            offset: iced::Vector::new(0.0, 6.0),
+        },
+        ..Default::default()
+    }
+}
+
+fn status_panel_style(theme: &Theme) -> container::Style {
+    let is_light = matches!(theme, Theme::Light);
+    container::Style {
+        background: Some(Background::Color(if is_light {
+            Color::from_rgb8(236, 242, 249)
+        } else {
+            Color::from_rgb8(20, 24, 28)
+        })),
+        border: Border {
+            radius: 12.0.into(),
+            width: 1.0,
+            color: if is_light {
+                Color::from_rgba8(70, 110, 155, 0.28)
+            } else {
+                Color::from_rgba8(160, 198, 241, 0.2)
+            },
+        },
+        ..Default::default()
+    }
 }
