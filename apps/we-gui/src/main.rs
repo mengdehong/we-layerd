@@ -44,6 +44,7 @@ struct App {
     supported_resolutions: Vec<ResolutionOption>,
     install_notice: Option<String>,
     tray: Option<tray::TrayController>,
+    main_window_id: Option<window::Id>,
 }
 
 #[derive(Debug, Clone)]
@@ -190,8 +191,11 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.viewport_width = size.width;
             Task::none()
         }
-        Message::WindowCloseRequested(id) => window::close(id),
-        Message::WindowOpened(_id) => Task::none(),
+        Message::WindowCloseRequested(id) => window::change_mode(id, window::Mode::Hidden),
+        Message::WindowOpened(id) => {
+            app.main_window_id = Some(id);
+            Task::none()
+        }
         Message::TrayTick => {
             if let Some(tray) = app.tray.as_mut() {
                 if let Some(action) = tray.poll_action() {
@@ -202,6 +206,13 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::TrayAction(action) => match action {
             tray::TrayAction::ShowWindow => {
+                if let Some(id) = app.main_window_id {
+                    return Task::batch(vec![
+                        window::change_mode(id, window::Mode::Windowed),
+                        window::minimize(id, false),
+                        window::gain_focus(id),
+                    ]);
+                }
                 let (_id, task) = window::open(window::Settings::default());
                 task.map(Message::WindowOpened)
             }
@@ -328,6 +339,7 @@ fn wallpaper_type_name(ty: WallpaperType) -> &'static str {
 fn subscription(_app: &App) -> Subscription<Message> {
     Subscription::batch(vec![
         window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
+        window::open_events().map(Message::WindowOpened),
         window::close_requests().map(Message::WindowCloseRequested),
         iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::TrayTick),
     ])
@@ -385,6 +397,7 @@ impl App {
                 supported_resolutions,
                 install_notice,
                 tray: tray::TrayController::new().ok(),
+                main_window_id: None,
             },
             Task::done(Message::AutoScan),
         )
@@ -466,7 +479,7 @@ fn make_wallpaper_card<'a>(
     let composed = stack![media, chip_overlay];
 
     let border_color = if is_selected {
-        Color::from_rgb8(76, 160, 255)
+        Color::from_rgb8(38, 148, 255)
     } else {
         Color { r: 1.0, g: 1.0, b: 1.0, a: 0.1 }
     };
@@ -476,8 +489,17 @@ fn make_wallpaper_card<'a>(
             container::Style {
                 border: Border {
                     radius: 14.0.into(),
-                    width: if is_selected { 2.0 } else { 1.0 },
+                    width: if is_selected { 4.0 } else { 1.0 },
                     color: border_color,
+                },
+                shadow: if is_selected {
+                    iced::Shadow {
+                        color: Color::from_rgba8(38, 148, 255, 0.45),
+                        blur_radius: 16.0,
+                        offset: iced::Vector::new(0.0, 0.0),
+                    }
+                } else {
+                    iced::Shadow::default()
                 },
                 ..Default::default()
             }
