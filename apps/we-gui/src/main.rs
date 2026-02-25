@@ -24,6 +24,7 @@ mod tray;
 
 fn main() -> iced::Result {
     iced::application("we-gui", update, view)
+        .theme(|app: &App| app.theme.clone())
         .subscription(subscription)
         .exit_on_close_request(false)
         .run_with(App::init)
@@ -45,6 +46,7 @@ struct App {
     install_notice: Option<String>,
     tray: Option<tray::TrayController>,
     main_window_id: Option<window::Id>,
+    theme: Theme,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +70,7 @@ enum Message {
     WindowCloseRequested(window::Id),
     WindowOpened(window::Id),
     TrayTick,
+    ThemeTick,
     TrayAction(tray::TrayAction),
 }
 
@@ -202,6 +205,10 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                     return Task::done(Message::TrayAction(action));
                 }
             }
+            Task::none()
+        }
+        Message::ThemeTick => {
+            app.theme = detect_system_theme();
             Task::none()
         }
         Message::TrayAction(action) => match action {
@@ -342,6 +349,7 @@ fn subscription(_app: &App) -> Subscription<Message> {
         window::open_events().map(Message::WindowOpened),
         window::close_requests().map(Message::WindowCloseRequested),
         iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::TrayTick),
+        iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::ThemeTick),
     ])
 }
 
@@ -398,6 +406,7 @@ impl App {
                 install_notice,
                 tray: tray::TrayController::new().ok(),
                 main_window_id: None,
+                theme: detect_system_theme(),
             },
             Task::done(Message::AutoScan),
         )
@@ -479,7 +488,7 @@ fn make_wallpaper_card<'a>(
     let composed = stack![media, chip_overlay];
 
     let border_color = if is_selected {
-        Color::from_rgb8(38, 148, 255)
+        Color::from_rgb8(45, 175, 255)
     } else {
         Color { r: 1.0, g: 1.0, b: 1.0, a: 0.1 }
     };
@@ -489,13 +498,13 @@ fn make_wallpaper_card<'a>(
             container::Style {
                 border: Border {
                     radius: 14.0.into(),
-                    width: if is_selected { 4.0 } else { 1.0 },
+                    width: if is_selected { 6.0 } else { 1.0 },
                     color: border_color,
                 },
                 shadow: if is_selected {
                     iced::Shadow {
-                        color: Color::from_rgba8(38, 148, 255, 0.45),
-                        blur_radius: 16.0,
+                        color: Color::from_rgba8(45, 175, 255, 0.85),
+                        blur_radius: 24.0,
                         offset: iced::Vector::new(0.0, 0.0),
                     }
                 } else {
@@ -535,10 +544,14 @@ fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::S
 }
 
 fn primary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let (r, g, b) = match status {
-        button::Status::Hovered => (0.13, 0.56, 0.96),
-        button::Status::Pressed => (0.09, 0.48, 0.88),
-        _ => (0.11, 0.53, 0.93),
+    let is_light = matches!(_theme, Theme::Light);
+    let (r, g, b) = match (is_light, status) {
+        (true, button::Status::Hovered) => (0.08, 0.47, 0.86),
+        (true, button::Status::Pressed) => (0.06, 0.40, 0.78),
+        (true, _) => (0.07, 0.44, 0.82),
+        (false, button::Status::Hovered) => (0.13, 0.56, 0.96),
+        (false, button::Status::Pressed) => (0.09, 0.48, 0.88),
+        (false, _) => (0.11, 0.53, 0.93),
     };
 
     button::Style {
@@ -554,10 +567,14 @@ fn primary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
 }
 
 fn secondary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let bg = match status {
-        button::Status::Hovered => Color::from_rgba(0.14, 0.14, 0.14, 0.82),
-        button::Status::Pressed => Color::from_rgba(0.10, 0.10, 0.10, 0.88),
-        _ => Color::from_rgba(0.12, 0.12, 0.12, 0.78),
+    let is_light = matches!(_theme, Theme::Light);
+    let bg = match (is_light, status) {
+        (true, button::Status::Hovered) => Color::from_rgba(0.95, 0.95, 0.95, 0.95),
+        (true, button::Status::Pressed) => Color::from_rgba(0.90, 0.90, 0.90, 0.98),
+        (true, _) => Color::from_rgba(0.93, 0.93, 0.93, 0.92),
+        (false, button::Status::Hovered) => Color::from_rgba(0.14, 0.14, 0.14, 0.82),
+        (false, button::Status::Pressed) => Color::from_rgba(0.10, 0.10, 0.10, 0.88),
+        (false, _) => Color::from_rgba(0.12, 0.12, 0.12, 0.78),
     };
 
     button::Style {
@@ -573,6 +590,14 @@ fn secondary_fab_style(_theme: &Theme, status: button::Status) -> button::Style 
             blur_radius: 10.0,
             offset: iced::Vector::new(0.0, 3.0),
         },
+    }
+}
+
+fn detect_system_theme() -> Theme {
+    match dark_light::detect() {
+        dark_light::Mode::Light => Theme::Light,
+        dark_light::Mode::Dark => Theme::Dark,
+        dark_light::Mode::Default => Theme::Dark,
     }
 }
 

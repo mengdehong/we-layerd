@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+dark-light = "1.1"
 iced = { version = "0.13", features = ["tokio", "image", "svg"] }
 resvg = "0.42"
 rfd = "0.15"
