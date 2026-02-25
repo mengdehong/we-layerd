@@ -55,75 +55,89 @@ pub fn build_settings_overlay<'a>(
     let wallpaper_path_display = format_path_for_display(&ui_settings.wallpaper_exe, 64);
     let workshop_path_display = format_path_for_display(&ui_settings.workshop_path, 64);
 
-    let card_content = scrollable(
-        column![
-            text("Settings").size(26),
-            text("Wallpaper Engine Path").size(14),
-            row![
-                text_input("/path/to/wallpaper64.exe", &ui_settings.wallpaper_exe)
-                    .on_input(Message::WallpaperExeChanged)
-                    .padding(10)
-                    .on_submit(Message::AutoScan)
-                    .width(Fill),
-                button(text("Browse")).on_press(Message::PickWallpaperExe),
-            ]
-            .spacing(10),
-            text(wallpaper_path_display).size(12),
-            text("Workshop Path").size(14),
-            row![
-                text_input("/path/to/workshop/content/431960", &ui_settings.workshop_path)
-                    .on_input(Message::WorkshopPathChanged)
-                    .padding(10)
-                    .on_submit(Message::AutoScan)
-                    .width(Fill),
-                button(text("Browse")).on_press(Message::PickWorkshopPath),
-            ]
-            .spacing(10),
-            text(workshop_path_display).size(12),
-            text("Frame Rate Limit (FPS)").size(14),
-            text_input("30", &ui_settings.fps_limit).on_input(Message::FpsLimitChanged).padding(10),
-            checkbox(ui_settings.show_fps)
-                .label("Show realtime FPS")
-                .on_toggle(Message::ShowFpsToggled),
-            text("Resolution").size(14),
-            pick_list(
-                supported_resolutions.to_vec(),
-                ui_settings.selected_resolution.clone(),
-                Message::ResolutionSelected,
-            )
-            .placeholder("Choose a resolution")
-            .padding(10),
-            text("Cgroup").size(18),
-            checkbox(ui_settings.cgroup_enabled)
-                .label("Enable cgroup metrics / limits")
-                .on_toggle(Message::CgroupEnabledToggled),
-            text("Cgroup Mode").size(14),
-            pick_list(
-                vec![CgroupModeOption::Detect, CgroupModeOption::LimitWine],
-                Some(ui_settings.cgroup_mode),
-                Message::CgroupModeSelected,
-            )
-            .padding(10),
-            text("Memory Limit (memory.max)").size(14),
-            text_input("e.g. 2147483648 or max", &ui_settings.cgroup_memory_max)
-                .on_input(Message::CgroupMemoryMaxChanged)
-                .padding(10),
-            text("CPU Limit (cpu.max)").size(14),
-            text_input("e.g. 50000 100000 or max 100000", &ui_settings.cgroup_cpu_max)
-                .on_input(Message::CgroupCpuMaxChanged)
-                .padding(10),
-            row![
-                text("Runtime Status").size(14),
-                button(text("Refresh")).on_press(Message::RefreshStatus),
-            ]
-            .spacing(10),
-            container(text(&ui_settings.status_text).size(12))
-                .width(Fill)
+    let mut content = column![
+        text("Settings").size(26),
+        text("Wallpaper Engine Path").size(14),
+        row![
+            text_input("/path/to/wallpaper64.exe", &ui_settings.wallpaper_exe)
+                .on_input(Message::WallpaperExeChanged)
                 .padding(10)
-                .style(status_panel_style),
+                .on_submit(Message::AutoScan)
+                .width(Fill),
+            button(text("Browse")).on_press(Message::PickWallpaperExe),
         ]
         .spacing(10),
-    );
+        text(wallpaper_path_display).size(12),
+        text("Workshop Path").size(14),
+        row![
+            text_input("/path/to/workshop/content/431960", &ui_settings.workshop_path)
+                .on_input(Message::WorkshopPathChanged)
+                .padding(10)
+                .on_submit(Message::AutoScan)
+                .width(Fill),
+            button(text("Browse")).on_press(Message::PickWorkshopPath),
+        ]
+        .spacing(10),
+        text(workshop_path_display).size(12),
+        text("Frame Rate Limit (FPS)").size(14),
+        text_input("30", &ui_settings.fps_limit).on_input(Message::FpsLimitChanged).padding(10),
+        checkbox(ui_settings.show_fps)
+            .label("Show realtime FPS")
+            .on_toggle(Message::ShowFpsToggled),
+        text("Resolution").size(14),
+        pick_list(
+            supported_resolutions.to_vec(),
+            ui_settings.selected_resolution.clone(),
+            Message::ResolutionSelected,
+        )
+        .placeholder("Choose a resolution")
+        .padding(10),
+        text("Cgroup").size(18),
+        checkbox(ui_settings.cgroup_enabled)
+            .label("Enable cgroup metrics / limits")
+            .on_toggle(Message::CgroupEnabledToggled),
+    ]
+    .spacing(10);
+
+    if ui_settings.cgroup_enabled {
+        content = content
+            .push(text("Cgroup Mode").size(14))
+            .push(
+                pick_list(
+                    vec![CgroupModeOption::Detect, CgroupModeOption::LimitWine],
+                    Some(ui_settings.cgroup_mode),
+                    Message::CgroupModeSelected,
+                )
+                .padding(10),
+            )
+            .push(text("Memory Limit (memory.max)").size(14))
+            .push(
+                text_input("e.g. 2147483648 or max", &ui_settings.cgroup_memory_max)
+                    .on_input(Message::CgroupMemoryMaxChanged)
+                    .padding(10),
+            )
+            .push(text("CPU Limit (cpu.max)").size(14))
+            .push(
+                text_input("e.g. 50000 100000 or max 100000", &ui_settings.cgroup_cpu_max)
+                    .on_input(Message::CgroupCpuMaxChanged)
+                    .padding(10),
+            )
+            .push(
+                row![
+                    text("Runtime Status").size(14),
+                    button(text("Refresh")).on_press(Message::RefreshStatus),
+                ]
+                .spacing(10),
+            )
+            .push(
+                container(text(&ui_settings.status_text).size(12))
+                    .width(Fill)
+                    .padding(10)
+                    .style(status_panel_style),
+            );
+    }
+
+    let card_content = scrollable(content);
 
     let card = container(card_content)
         .width(760)
