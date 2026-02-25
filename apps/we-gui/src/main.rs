@@ -23,7 +23,10 @@ mod settings_panel;
 mod tray;
 
 fn main() -> iced::Result {
-    iced::application("we-gui", update, view).subscription(subscription).run_with(App::init)
+    iced::application("we-gui", update, view)
+        .subscription(subscription)
+        .exit_on_close_request(false)
+        .run_with(App::init)
 }
 
 struct App {
@@ -61,6 +64,7 @@ enum Message {
     ShowFpsToggled(bool),
     ResolutionSelected(settings_panel::ResolutionOption),
     WindowResized(Size),
+    WindowCloseRequested(window::Id),
     TrayTick,
     TrayAction(tray::TrayAction),
 }
@@ -185,6 +189,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.viewport_width = size.width;
             Task::none()
         }
+        Message::WindowCloseRequested(id) => window::minimize(id, true),
         Message::TrayTick => {
             if let Some(tray) = app.tray.as_mut() {
                 if let Some(action) = tray.poll_action() {
@@ -206,6 +211,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             tray::TrayAction::Quit => {
                 let _ = stop_runtime(app);
+                let _ = send_layerd_ctl("stop");
                 std::process::exit(0);
             }
         },
@@ -316,6 +322,7 @@ fn wallpaper_type_name(ty: WallpaperType) -> &'static str {
 fn subscription(_app: &App) -> Subscription<Message> {
     Subscription::batch(vec![
         window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
+        window::close_requests().map(Message::WindowCloseRequested),
         iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::TrayTick),
     ])
 }

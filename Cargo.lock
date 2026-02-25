@@ -5203,6 +5203,7 @@ dependencies = [
 name = "we-gui"
 version = "0.1.0"
 dependencies = [
+ "gtk",
  "iced",
  "rfd",
  "tray-icon",
