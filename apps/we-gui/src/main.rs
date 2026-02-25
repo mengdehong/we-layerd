@@ -6,8 +6,8 @@ use std::{
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{button, column, container, image, row, scrollable, stack, svg, text},
-    window, Background, Border, Color, Element, Fill, Size, Subscription, Task, Theme,
+    widget::{button, checkbox, column, container, image, row, scrollable, slider, stack, svg, text, text_input},
+    window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
 use we_core::{
     config::{build_config, save_config, LaunchSettings},
@@ -32,6 +32,8 @@ struct App {
     layerd_available: bool,
     mpv_available: bool,
     launch_settings: LaunchSettings,
+    ui_settings: UiSettings,
+    show_settings: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +44,33 @@ enum Message {
     PlayPressed,
     StopPressed,
     SettingsPressed,
+    WallpaperExeChanged(String),
+    WorkshopPathChanged(String),
+    WineCommandChanged(String),
+    FpsLimitChanged(u32),
+    ShowFpsToggled(bool),
+    WidthChanged(String),
+    HeightChanged(String),
+    XChanged(String),
+    YChanged(String),
+    WindowTitleChanged(String),
+    WmClassChanged(String),
     WindowResized(Size),
+}
+
+#[derive(Debug, Clone)]
+struct UiSettings {
+    wallpaper_exe: String,
+    workshop_path: String,
+    wine_command: String,
+    fps_limit: u32,
+    show_fps: bool,
+    width: String,
+    height: String,
+    x: String,
+    y: String,
+    window_title: String,
+    wm_class: String,
 }
 
 fn update(app: &mut App, message: Message) -> Task<Message> {
@@ -127,7 +155,64 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::SettingsPressed => Task::none(),
+        Message::SettingsPressed => {
+            app.show_settings = !app.show_settings;
+            Task::none()
+        }
+        Message::WallpaperExeChanged(value) => {
+            app.ui_settings.wallpaper_exe = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::WorkshopPathChanged(value) => {
+            app.ui_settings.workshop_path = value;
+            Task::none()
+        }
+        Message::WineCommandChanged(value) => {
+            app.ui_settings.wine_command = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::FpsLimitChanged(value) => {
+            app.ui_settings.fps_limit = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::ShowFpsToggled(value) => {
+            app.ui_settings.show_fps = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::WidthChanged(value) => {
+            app.ui_settings.width = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::HeightChanged(value) => {
+            app.ui_settings.height = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::XChanged(value) => {
+            app.ui_settings.x = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::YChanged(value) => {
+            app.ui_settings.y = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::WindowTitleChanged(value) => {
+            app.ui_settings.window_title = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::WmClassChanged(value) => {
+            app.ui_settings.wm_class = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
         Message::WindowResized(size) => {
             app.viewport_width = size.width;
             Task::none()
@@ -186,8 +271,8 @@ fn view(app: &App) -> Element<'_, Message> {
     .align_y(Vertical::Bottom)
     .padding(20);
 
-    if app.layerd_available || app.mpv_available {
-        stack![content, floating].into()
+    let runtime_warning: Option<Element<'_, Message>> = if app.layerd_available || app.mpv_available {
+        None
     } else {
         let warning = container(
             text("we-layerd / mpv not found in PATH")
@@ -199,8 +284,20 @@ fn view(app: &App) -> Element<'_, Message> {
         .align_x(Horizontal::Center)
         .align_y(Vertical::Top)
         .padding(24);
+        Some(warning.into())
+    };
 
-        stack![content, warning, floating].into()
+    let settings_overlay: Option<Element<'_, Message>> = if app.show_settings {
+        Some(build_settings_overlay(app))
+    } else {
+        None
+    };
+
+    match (runtime_warning, settings_overlay) {
+        (Some(w), Some(s)) => stack![content, w, s, floating].into(),
+        (Some(w), None) => stack![content, w, floating].into(),
+        (None, Some(s)) => stack![content, s, floating].into(),
+        (None, None) => stack![content, floating].into(),
     }
 }
 
@@ -230,6 +327,22 @@ impl App {
         if let Some(exe) = steam::discover_wallpaper_engine_exe() {
             launch_settings.wallpaper_exe = exe.display().to_string();
         }
+        let workshop_path = steam::discover_workshop_wallpaper_root()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let ui_settings = UiSettings {
+            wallpaper_exe: launch_settings.wallpaper_exe.clone(),
+            workshop_path,
+            wine_command: launch_settings.wine_command.clone(),
+            fps_limit: launch_settings.fps_limit,
+            show_fps: launch_settings.show_fps,
+            width: launch_settings.width.to_string(),
+            height: launch_settings.height.to_string(),
+            x: launch_settings.x.to_string(),
+            y: launch_settings.y.to_string(),
+            window_title: launch_settings.play_in_window_title.clone(),
+            wm_class: launch_settings.wm_class_contains.clone(),
+        };
         (
             Self {
                 entries: Vec::new(),
@@ -242,6 +355,8 @@ impl App {
                 layerd_available: command_exists_in_path("we-layerd"),
                 mpv_available: command_exists_in_path("mpv"),
                 launch_settings,
+                ui_settings,
+                show_settings: false,
             },
             Task::done(Message::AutoScan),
         )
@@ -263,7 +378,7 @@ fn build_wallpaper_grid<'a>(
     width: f32,
 ) -> Element<'a, Message> {
     let spacing = 12.0;
-    let card_width = 260.0;
+    let card_width = 360.0;
     let cols = ((width - spacing) / (card_width + spacing)).floor().max(1.0) as usize;
 
     let mut root = column!().spacing(spacing as u16).padding(spacing as u16);
@@ -293,6 +408,7 @@ fn make_wallpaper_card<'a>(
         image(image::Handle::from_path(path))
             .width(card_width)
             .height(card_height)
+            .content_fit(ContentFit::Cover)
             .into()
     } else {
         container(text(""))
@@ -358,6 +474,91 @@ fn make_wallpaper_card<'a>(
         .on_press(Message::SelectWallpaper(index))
         .style(image_card_button_style)
         .into()
+}
+
+fn build_settings_overlay(app: &App) -> Element<'_, Message> {
+    let card = container(
+        column![
+            text("Settings").size(26).color(Color::from_rgb8(150, 205, 255)),
+            text_input("Wallpaper Engine exe", &app.ui_settings.wallpaper_exe)
+                .on_input(Message::WallpaperExeChanged)
+                .padding(10),
+            text_input("Workshop wallpapers path", &app.ui_settings.workshop_path)
+                .on_input(Message::WorkshopPathChanged)
+                .padding(10),
+            text_input("Wine command", &app.ui_settings.wine_command)
+                .on_input(Message::WineCommandChanged)
+                .padding(10),
+            row![
+                text("FPS Limit"),
+                slider(15..=144, app.ui_settings.fps_limit, Message::FpsLimitChanged),
+                text(app.ui_settings.fps_limit.to_string())
+            ]
+            .spacing(10)
+            .align_y(Vertical::Center),
+            checkbox("Show realtime FPS", app.ui_settings.show_fps).on_toggle(Message::ShowFpsToggled),
+            row![
+                text_input("Width", &app.ui_settings.width).on_input(Message::WidthChanged).padding(8),
+                text_input("Height", &app.ui_settings.height).on_input(Message::HeightChanged).padding(8),
+                text_input("X", &app.ui_settings.x).on_input(Message::XChanged).padding(8),
+                text_input("Y", &app.ui_settings.y).on_input(Message::YChanged).padding(8),
+            ]
+            .spacing(8),
+            text_input("Window title", &app.ui_settings.window_title)
+                .on_input(Message::WindowTitleChanged)
+                .padding(10),
+            text_input("WM class filter", &app.ui_settings.wm_class)
+                .on_input(Message::WmClassChanged)
+                .padding(10),
+        ]
+        .spacing(12),
+    )
+    .width(640)
+    .padding(16)
+    .style(|_theme: &Theme| container::Style {
+        text_color: Some(Color::WHITE),
+        background: Some(Background::Color(Color::from_rgba(0.08, 0.08, 0.10, 0.95))),
+        border: Border {
+            radius: 16.0.into(),
+            width: 1.0,
+            color: Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+        },
+        shadow: iced::Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.40),
+            blur_radius: 20.0,
+            offset: iced::Vector::new(0.0, 6.0),
+        },
+    });
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Center)
+        .padding(20)
+        .into()
+}
+
+fn sync_launch_settings(app: &mut App) {
+    app.launch_settings.wallpaper_exe = app.ui_settings.wallpaper_exe.clone();
+    app.launch_settings.wine_command = app.ui_settings.wine_command.clone();
+    app.launch_settings.fps_limit = app.ui_settings.fps_limit;
+    app.launch_settings.show_fps = app.ui_settings.show_fps;
+    app.launch_settings.play_in_window_title = app.ui_settings.window_title.clone();
+    app.launch_settings.wm_class_contains = app.ui_settings.wm_class.clone();
+
+    if let Ok(v) = app.ui_settings.width.parse::<u32>() {
+        app.launch_settings.width = v;
+    }
+    if let Ok(v) = app.ui_settings.height.parse::<u32>() {
+        app.launch_settings.height = v;
+    }
+    if let Ok(v) = app.ui_settings.x.parse::<i32>() {
+        app.launch_settings.x = v;
+    }
+    if let Ok(v) = app.ui_settings.y.parse::<i32>() {
+        app.launch_settings.y = v;
+    }
 }
 
 fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
