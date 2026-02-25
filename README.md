@@ -2,56 +2,46 @@
 
 `we-layerd` is a Rust daemon for running Wallpaper Engine on Linux compositors.
 
-It supports:
-- Wine mode: launch `wallpaper64.exe`, capture XWayland/X11 output, and render to Wayland `wlr-layer-shell`.
-- Native video mode: decode video wallpapers in-process (FFmpeg path) and render with `wgpu`.
-- GUI companion (`we-gui`): wallpaper browser, config editor, tray control, and runtime status view.
+## Features
+- Wine mode: launch `wallpaper64.exe`, capture XWayland/X11 output, render to Wayland layer-shell.
+- Native video mode: FFmpeg + `wgpu` pipeline.
+- GUI companion (`we-gui`) with tray controls.
+- Runtime control commands: `stop`, `pause`, `resume`, `reload`, `status`.
+- Single-instance daemon lock per user.
+- Optional cgroup monitor/limit support.
 
-## Features (current)
-- `run`, `doctor`, `print-config`, `ctl` CLI commands.
-- Configurable Wine launch command and Wallpaper Engine executable path.
-- X11 window discovery via `_NET_WM_PID`, `WM_CLASS`, title keywords.
-- XComposite single-frame and streaming capture (`XGetImage` path).
-- `wgpu` rendering pipeline that uploads captured RGBA frames to textures.
-- Layer-shell background surfaces with click-through input regions.
-- Basic multi-output scaffold (`output-<global-id>` mapping).
-- Resilience basics: readable errors, capture failure refind, optional Wine auto-restart.
-- Single-instance daemon lock (same user cannot run two daemon instances).
-- IPC control channel for runtime commands (`stop`, `pause`, `resume`, `reload`, `status`).
-- Optional cgroup integration:
-  - `detect`: monitor daemon + wine usage.
-  - `limit_wine`: apply limits to Wine process group only.
-- `ctl status` returns effective runtime config plus runtime/cgroup status block.
-
-## Build
-```bash
-cargo build
-```
-
-Workspace targets:
-```bash
-# core library
-cargo build -p we-core
-
-# GUI app (cross-platform dev target)
-cargo run -p we-gui
-
-# daemon
-cargo run -p we-layerd -- run --config ./config.toml
-```
-
-## Runtime dependencies
+## Dependencies
+- Rust toolchain (`cargo`, `rustc`) for building.
+- `pkg-config` (`pkgconf`) for native library detection during build.
 - Wayland compositor with `zwlr_layer_shell_v1` (target: niri; should also work on Hyprland/sway).
 - XWayland/X11 for Wine render window capture.
 - X11 Composite extension.
 - Vulkan/GL stack usable by `wgpu`.
+- FFmpeg libraries and headers (`libavformat`, `libavcodec`, `libavutil`, `libswscale`).
 - Wine + Wallpaper Engine executable (`wallpaper64.exe` or `wallpaper32.exe`).
 - Linux cgroup v2 (optional, only when cgroup feature is enabled in config).
+
+Example packages (Arch Linux):
+```bash
+sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-loader wine
+```
+
+## Build
+Build release binaries:
+```bash
+cargo build --release -p we-layerd -p we-gui
+```
+
+Install binaries to a directory in `PATH` (example: `~/.local/bin`):
+```bash
+install -Dm755 target/release/we-layerd ~/.local/bin/we-layerd
+install -Dm755 target/release/we-gui ~/.local/bin/we-gui
+```
 
 ## Config
 Start from:
 ```bash
-cp config.example.toml config.toml
+cp config.example.toml ~/.config/we-layerd/config.toml
 ```
 
 Minimal required fields:
@@ -69,35 +59,35 @@ memory_max = "max"   # optional, e.g. "2147483648"
 cpu_max = "max 100000" # optional, e.g. "50000 100000"
 ```
 
-Print effective config defaults:
+## Usage
+After `we-layerd`/`we-gui` are in `PATH`:
+
+Start GUI:
 ```bash
-cargo run -- print-config
+we-gui
 ```
 
-## Commands
-Run daemon:
+Start daemon directly:
 ```bash
-cargo run -- run --config ./config.toml
-```
-
-Diagnostics:
-```bash
-cargo run -- doctor
+we-layerd run --config ~/.config/we-layerd/config.toml
 ```
 
 Control a running daemon:
 ```bash
-# stop / pause / resume / reload
-cargo run -- ctl stop
-cargo run -- ctl pause
-cargo run -- ctl resume
-cargo run -- ctl reload
-
-# query runtime status (effective config + runtime status block)
-cargo run -- ctl status
+we-layerd ctl stop
+we-layerd ctl pause
+we-layerd ctl resume
+we-layerd ctl reload
+we-layerd ctl status
 ```
 
-## IPC and single-instance behavior
+Other commands:
+```bash
+we-layerd doctor
+we-layerd print-config --config ~/.config/we-layerd/config.toml
+```
+
+## IPC and single-instance
 - On Linux, control IPC uses an abstract Unix socket name (`we-layerd.control.<uid>`).
 - File-socket fallback is kept for compatibility.
 - Daemon startup acquires an instance lock; launching a second instance under the same user returns an `already running` error.
