@@ -1,0 +1,8 @@
+[package]
+name = "we-gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iced = { version = "0.13", features = ["tokio"] }
+we-core = { path = "../../crates/we-core" }
