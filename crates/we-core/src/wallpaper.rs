@@ -21,6 +21,7 @@ pub struct WallpaperEntry {
     pub title: String,
     pub ty: WallpaperType,
     pub preview: Option<PathBuf>,
+    pub source_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +30,8 @@ struct ProjectJson {
     title: String,
     #[serde(default)]
     r#type: String,
+    #[serde(default)]
+    file: String,
 }
 
 pub fn scan_workshop_wallpapers(workshop_app_root: &Path) -> Result<Vec<WallpaperEntry>> {
@@ -53,6 +56,12 @@ pub fn scan_workshop_wallpapers(workshop_app_root: &Path) -> Result<Vec<Wallpape
         }
 
         let meta = parse_project_json(&project_json)?;
+        let ty = parse_type(&meta.r#type);
+        let source_file = if meta.file.trim().is_empty() {
+            None
+        } else {
+            Some(path.join(meta.file))
+        };
         let preview = detect_preview_image(&path);
         result.push(WallpaperEntry {
             id,
@@ -62,8 +71,9 @@ pub fn scan_workshop_wallpapers(workshop_app_root: &Path) -> Result<Vec<Wallpape
             } else {
                 meta.title
             },
-            ty: parse_type(&meta.r#type),
+            ty,
             preview,
+            source_file,
         });
     }
 

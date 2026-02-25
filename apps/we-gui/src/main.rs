@@ -1,7 +1,6 @@
 use std::{
     env,
-    fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Child, Command},
 };
 
@@ -11,6 +10,7 @@ use iced::{
     window, Background, Border, Color, Element, Fill, Size, Subscription, Task, Theme,
 };
 use we_core::{
+    config::{build_config, save_config, LaunchSettings},
     steam,
     wallpaper::{self, WallpaperEntry, WallpaperType},
 };
@@ -25,9 +25,13 @@ struct App {
     entries: Vec<WallpaperEntry>,
     selected_id: Option<String>,
     config_path: PathBuf,
-    layerd_child: Option<Child>,
+    runtime_child: Option<Child>,
+    selected_type: Option<WallpaperType>,
+    selected_video_file: Option<PathBuf>,
     viewport_width: f32,
     layerd_available: bool,
+    mpv_available: bool,
+    launch_settings: LaunchSettings,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +40,7 @@ enum Message {
     Scanned(Result<Vec<WallpaperEntry>, String>),
     SelectWallpaper(usize),
     PlayPressed,
+    StopPressed,
     SettingsPressed,
     WindowResized(Size),
 }
@@ -58,35 +63,67 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             };
 
             app.selected_id = Some(entry.id.clone());
-            let _ = write_config_for_wallpaper(&app.config_path, &entry.project_json);
+            app.selected_type = Some(entry.ty);
+            app.selected_video_file = entry.source_file.clone();
+            let cfg = build_config(
+                &app.launch_settings,
+                entry.ty,
+                &entry.project_json,
+                entry.source_file.as_deref(),
+            );
+            let _ = save_config(&app.config_path, &cfg);
             Task::none()
         }
         Message::PlayPressed => {
-            if !app.layerd_available {
-                return Task::none();
-            }
-
-            if let Some(child) = app.layerd_child.as_mut() {
+            if let Some(child) = app.runtime_child.as_mut() {
                 if let Ok(Some(_)) = child.try_wait() {
-                    app.layerd_child = None;
+                    app.runtime_child = None;
                 }
             }
 
-            if app.layerd_child.is_some() {
+            if app.runtime_child.is_some() {
                 return Task::none();
             }
 
-            let spawn = Command::new("we-layerd")
-                .arg("run")
-                .arg("--config")
-                .arg(&app.config_path)
-                .spawn();
+            let spawn = match app.selected_type {
+                Some(WallpaperType::Video) => {
+                    if !app.mpv_available {
+                        return Task::none();
+                    }
+                    let Some(video_file) = app.selected_video_file.as_ref() else {
+                        return Task::none();
+                    };
+                    Command::new("mpv")
+                        .arg("--loop=inf")
+                        .arg("--no-terminal")
+                        .arg("--no-input-default-bindings")
+                        .arg(video_file)
+                        .spawn()
+                }
+                _ => {
+                    if !app.layerd_available {
+                        return Task::none();
+                    }
+                    Command::new("we-layerd")
+                        .arg("run")
+                        .arg("--config")
+                        .arg(&app.config_path)
+                        .spawn()
+                }
+            };
 
             match spawn {
                 Ok(child) => {
-                    app.layerd_child = Some(child);
+                    app.runtime_child = Some(child);
                 }
                 Err(_err) => {}
+            }
+            Task::none()
+        }
+        Message::StopPressed => {
+            if let Some(mut child) = app.runtime_child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
             Task::none()
         }
@@ -107,6 +144,17 @@ fn view(app: &App) -> Element<'_, Message> {
 
     let floating = container(
         column![
+            button(
+                svg(svg::Handle::from_memory(include_bytes!(
+                    "../assets/icons/stop.svg"
+                )))
+                .width(24)
+                .height(24),
+            )
+                .width(52)
+                .height(52)
+                .style(secondary_fab_style)
+                .on_press(Message::StopPressed),
             button(
                 svg(svg::Handle::from_memory(include_bytes!(
                     "../assets/icons/settings.svg"
@@ -138,11 +186,11 @@ fn view(app: &App) -> Element<'_, Message> {
     .align_y(Vertical::Bottom)
     .padding(20);
 
-    if app.layerd_available {
+    if app.layerd_available || app.mpv_available {
         stack![content, floating].into()
     } else {
         let warning = container(
-            text("we-layerd not found in PATH")
+            text("we-layerd / mpv not found in PATH")
                 .size(30)
                 .color(Color::from_rgb8(150, 205, 255)),
         )
@@ -178,14 +226,22 @@ fn subscription(_app: &App) -> Subscription<Message> {
 impl App {
     fn init() -> (Self, Task<Message>) {
         let config_path = steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
+        let mut launch_settings = LaunchSettings::default();
+        if let Some(exe) = steam::discover_wallpaper_engine_exe() {
+            launch_settings.wallpaper_exe = exe.display().to_string();
+        }
         (
             Self {
                 entries: Vec::new(),
                 selected_id: None,
                 config_path,
-                layerd_child: None,
+                runtime_child: None,
+                selected_type: None,
+                selected_video_file: None,
                 viewport_width: 1280.0,
                 layerd_available: command_exists_in_path("we-layerd"),
+                mpv_available: command_exists_in_path("mpv"),
+                launch_settings,
             },
             Task::done(Message::AutoScan),
         )
@@ -194,53 +250,11 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        if let Some(mut child) = self.layerd_child.take() {
+        if let Some(mut child) = self.runtime_child.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
     }
-}
-
-fn write_config_for_wallpaper(config_path: &Path, project_json: &Path) -> Result<(), String> {
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-
-    let wallpaper_exe = steam::discover_wallpaper_engine_exe()
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
-    let project = project_json.display().to_string();
-
-    let content = format!(
-        r#"[general]
-fps_limit = 30
-restart_wine_on_exit = true
-refind_window_on_capture_error = true
-show_fps = false
-fps_report_interval_secs = 1
-
-[wine]
-command = "wine"
-wallpaper_exe = "{wallpaper_exe}"
-args = [
-  "-control", "openWallpaper",
-  "-file", "{project}",
-  "-playInWindow", "WE-DEBUG-WINDOW",
-  "-width", "2560",
-  "-height", "1600",
-  "-x", "100",
-  "-y", "100",
-]
-
-[capture]
-wm_class_contains = "wallpaper64"
-title_contains = "WE-DEBUG-WINDOW"
-
-[capture.output_window_map]
-"#
-    );
-
-    fs::write(config_path, content).map_err(|e| e.to_string())
 }
 
 fn build_wallpaper_grid<'a>(
