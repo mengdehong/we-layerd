@@ -466,7 +466,7 @@ fn make_wallpaper_card<'a>(
     let composed = stack![media, chip_overlay];
 
     let border_color = if is_selected {
-        Color::from_rgb8(255, 255, 255)
+        Color::from_rgb8(76, 160, 255)
     } else {
         Color { r: 1.0, g: 1.0, b: 1.0, a: 0.1 }
     };

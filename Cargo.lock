@@ -5205,6 +5205,7 @@ version = "0.1.0"
 dependencies = [
  "gtk",
  "iced",
+ "resvg",
  "rfd",
  "tray-icon",
  "we-core",

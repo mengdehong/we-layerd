@@ -171,6 +171,10 @@ fn new_other() -> Result<TrayController, Box<dyn std::error::Error + Send + Sync
 }
 
 fn simple_icon() -> Result<Icon, Box<dyn std::error::Error + Send + Sync>> {
+    if let Ok(icon) = icon_from_svg(22) {
+        return Ok(icon);
+    }
+
     let width = 16;
     let height = 16;
     let mut rgba = vec![0u8; width * height * 4];
@@ -192,4 +196,18 @@ fn simple_icon() -> Result<Icon, Box<dyn std::error::Error + Send + Sync>> {
         }
     }
     Ok(Icon::from_rgba(rgba, width as u32, height as u32)?)
+}
+
+fn icon_from_svg(size: u32) -> Result<Icon, Box<dyn std::error::Error + Send + Sync>> {
+    let svg = include_str!("../assets/we-gui-logo.svg");
+    let options = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_str(svg, &options)?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).ok_or("failed to alloc pixmap")?;
+    let target = resvg::tiny_skia::Transform::from_scale(
+        size as f32 / tree.size().width(),
+        size as f32 / tree.size().height(),
+    );
+    let mut pixmap_mut = pixmap.as_mut();
+    resvg::render(&tree, target, &mut pixmap_mut);
+    Ok(Icon::from_rgba(pixmap.take(), size, size)?)
 }

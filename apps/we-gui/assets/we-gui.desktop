@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=we-gui
+Comment=Wallpaper Engine helper GUI for Linux
+Exec=we-gui
+Icon=we-gui
+Terminal=false
+Categories=Utility;Graphics;
+StartupNotify=true
