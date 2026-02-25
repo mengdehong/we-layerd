@@ -65,6 +65,7 @@ enum Message {
     ResolutionSelected(settings_panel::ResolutionOption),
     WindowResized(Size),
     WindowCloseRequested(window::Id),
+    WindowOpened(window::Id),
     TrayTick,
     TrayAction(tray::TrayAction),
 }
@@ -189,7 +190,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             app.viewport_width = size.width;
             Task::none()
         }
-        Message::WindowCloseRequested(id) => window::minimize(id, true),
+        Message::WindowCloseRequested(id) => window::close(id),
+        Message::WindowOpened(_id) => Task::none(),
         Message::TrayTick => {
             if let Some(tray) = app.tray.as_mut() {
                 if let Some(action) = tray.poll_action() {
@@ -199,6 +201,10 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::TrayAction(action) => match action {
+            tray::TrayAction::ShowWindow => {
+                let (_id, task) = window::open(window::Settings::default());
+                task.map(Message::WindowOpened)
+            }
             tray::TrayAction::PlaySwitch => Task::done(Message::PlayPressed),
             tray::TrayAction::Stop => Task::done(Message::StopPressed),
             tray::TrayAction::Pause => {

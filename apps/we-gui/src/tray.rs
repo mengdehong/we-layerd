@@ -7,6 +7,7 @@ use tray_icon::{
 
 #[derive(Debug, Clone, Copy)]
 pub enum TrayAction {
+    ShowWindow,
     PlaySwitch,
     Stop,
     Pause,
@@ -42,13 +43,15 @@ fn new_linux() -> Result<TrayController, Box<dyn std::error::Error + Send + Sync
         }
 
         let menu = Menu::new();
+        let show = MenuItem::new("Show Window", true, None);
         let play = MenuItem::new("Play / Switch", true, None);
         let stop = MenuItem::new("Stop", true, None);
         let pause = MenuItem::new("Pause", true, None);
         let resume = MenuItem::new("Resume", true, None);
         let quit = MenuItem::new("Quit", true, None);
 
-        if menu.append(&play).is_err()
+        if menu.append(&show).is_err()
+            || menu.append(&play).is_err()
             || menu.append(&stop).is_err()
             || menu.append(&pause).is_err()
             || menu.append(&resume).is_err()
@@ -57,6 +60,7 @@ fn new_linux() -> Result<TrayController, Box<dyn std::error::Error + Send + Sync
             return;
         }
 
+        let show_id = show.id().0.clone();
         let play_id = play.id().0.clone();
         let stop_id = stop.id().0.clone();
         let pause_id = pause.id().0.clone();
@@ -65,7 +69,9 @@ fn new_linux() -> Result<TrayController, Box<dyn std::error::Error + Send + Sync
         let tx_events = tx.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let id = event.id.0;
-            let action = if id == play_id {
+            let action = if id == show_id {
+                Some(TrayAction::ShowWindow)
+            } else if id == play_id {
                 Some(TrayAction::PlaySwitch)
             } else if id == stop_id {
                 Some(TrayAction::Stop)
@@ -104,12 +110,14 @@ fn new_linux() -> Result<TrayController, Box<dyn std::error::Error + Send + Sync
 #[cfg(not(target_os = "linux"))]
 fn new_other() -> Result<TrayController, Box<dyn std::error::Error + Send + Sync>> {
     let menu = Menu::new();
+    let show = MenuItem::new("Show Window", true, None);
     let play = MenuItem::new("Play / Switch", true, None);
     let stop = MenuItem::new("Stop", true, None);
     let pause = MenuItem::new("Pause", true, None);
     let resume = MenuItem::new("Resume", true, None);
     let quit = MenuItem::new("Quit", true, None);
 
+    menu.append(&show)?;
     menu.append(&play)?;
     menu.append(&stop)?;
     menu.append(&pause)?;
@@ -126,6 +134,7 @@ fn new_other() -> Result<TrayController, Box<dyn std::error::Error + Send + Sync
     let (tx, rx) = mpsc::channel::<TrayAction>();
     let menu_rx = MenuEvent::receiver();
     std::thread::spawn({
+        let show_id = show.id().0.clone();
         let play_id = play.id().0.clone();
         let stop_id = stop.id().0.clone();
         let pause_id = pause.id().0.clone();
@@ -136,7 +145,9 @@ fn new_other() -> Result<TrayController, Box<dyn std::error::Error + Send + Sync
                 break;
             };
             let id = event.id.0;
-            let action = if id == play_id {
+            let action = if id == show_id {
+                Some(TrayAction::ShowWindow)
+            } else if id == play_id {
                 Some(TrayAction::PlaySwitch)
             } else if id == stop_id {
                 Some(TrayAction::Stop)
