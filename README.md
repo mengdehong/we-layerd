@@ -2,6 +2,8 @@
 
 `we-layerd` is a Rust daemon for running Wallpaper Engine on Linux compositors.
 
+Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
+
 ## Features
 - Wine mode: launch `wallpaper64.exe`, capture XWayland/X11 output, render to Wayland layer-shell.
 - Native video mode: FFmpeg + `wgpu` pipeline.
@@ -23,7 +25,7 @@
 
 Example packages (Arch Linux):
 ```bash
-sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-loader wine
+sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine
 ```
 
 ## Build
@@ -95,6 +97,8 @@ we-layerd print-config --config ~/.config/we-layerd/config.toml
 ## Troubleshooting
 - `WAYLAND_DISPLAY` missing: you are not in a Wayland session shell.
 - `DISPLAY` missing: XWayland/X11 bridge is not visible to the process.
+- `Wallpaper Engine is not installed. Please install it, or choose paths in Settings.`: Steam common path does not contain `wallpaper_engine`. Install Wallpaper Engine first, or set paths manually in Settings.
+- `Wallpaper Engine first-run setup is pending. Launch it once in Steam to run installer.exe.`: `installer.exe` exists but `wallpaper64.exe` is missing. Run Wallpaper Engine once in Steam to complete first-run setup.
 - Cannot find window: relax `capture.wm_class_contains` / `capture.title_contains`, or pin `capture.net_wm_pid`.
 - Capture errors: ensure XComposite is available and the window still exists.
 - No layer surface: compositor may not expose `zwlr_layer_shell_v1`.

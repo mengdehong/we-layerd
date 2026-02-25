@@ -1,0 +1,97 @@
+# we-layerd（中文文档）
+
+`we-layerd` 是一个在 Linux 合成器上运行 Wallpaper Engine 的 Rust 守护进程。
+
+## 功能
+- Wine 模式：启动 `wallpaper64.exe`，捕获 XWayland/X11 画面，渲染到 Wayland layer-shell。
+- 原生视频模式：使用 FFmpeg + `wgpu` 播放视频壁纸。
+- GUI 程序 `we-gui`：壁纸浏览、配置编辑、托盘控制、运行状态查看。
+- 运行时控制命令：`stop`、`pause`、`resume`、`reload`、`status`。
+- 单实例守护进程锁（同一用户不可重复启动）。
+- 可选 cgroup 监控/限制。
+
+## 依赖
+- 构建依赖：Rust 工具链（`cargo`、`rustc`）、`pkg-config`（`pkgconf`）。
+- 运行依赖：
+  - 支持 `zwlr_layer_shell_v1` 的 Wayland 合成器（niri / Hyprland / sway 等）。
+  - XWayland/X11 与 XComposite 扩展（Wine 窗口捕获需要）。
+  - Vulkan/GL 运行环境（`wgpu`）。
+  - FFmpeg 库与头文件（`libavformat`、`libavcodec`、`libavutil`、`libswscale`）。
+  - Wine 与 Wallpaper Engine 可执行文件。
+  - cgroup v2（仅在启用 cgroup 功能时需要）。
+
+Arch Linux 依赖示例：
+```bash
+sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine
+```
+
+## 构建
+构建发布版二进制：
+```bash
+cargo build --release -p we-layerd -p we-gui
+```
+
+安装到 `PATH`（示例：`~/.local/bin`）：
+```bash
+install -Dm755 target/release/we-layerd ~/.local/bin/we-layerd
+install -Dm755 target/release/we-gui ~/.local/bin/we-gui
+```
+
+## 配置
+复制示例配置：
+```bash
+cp config.example.toml ~/.config/we-layerd/config.toml
+```
+
+关键字段：
+- `wine.wallpaper_exe`：Wallpaper Engine 可执行文件路径。
+- `wine.args`：scene/web 模式启动参数（`openWallpaper`）。
+- `runtime`：`wine_layerd` 或 `video_native`。
+
+可选 cgroup 配置：
+```toml
+[cgroup]
+enabled = false
+mode = "detect"      # detect | limit_wine
+memory_max = "max"   # 可选，如 "2147483648"
+cpu_max = "max 100000" # 可选，如 "50000 100000"
+```
+
+## 使用
+确保 `we-layerd` / `we-gui` 在 `PATH` 后：
+
+启动 GUI：
+```bash
+we-gui
+```
+
+直接启动守护进程：
+```bash
+we-layerd run --config ~/.config/we-layerd/config.toml
+```
+
+控制运行中的守护进程：
+```bash
+we-layerd ctl stop
+we-layerd ctl pause
+we-layerd ctl resume
+we-layerd ctl reload
+we-layerd ctl status
+```
+
+其他命令：
+```bash
+we-layerd doctor
+we-layerd print-config --config ~/.config/we-layerd/config.toml
+```
+
+## 故障排查
+- `WAYLAND_DISPLAY` 缺失：当前 shell 不在 Wayland 会话环境内。
+- `DISPLAY` 缺失：进程看不到 XWayland/X11 桥接。
+- `Wallpaper Engine is not installed. Please install it, or choose paths in Settings.`：
+  未发现 `wallpaper_engine` 目录。请先安装，或在设置中手动指定路径。
+- `Wallpaper Engine first-run setup is pending. Launch it once in Steam to run installer.exe.`：
+  存在 `installer.exe` 但缺少 `wallpaper64.exe`。请先在 Steam 里运行一次 Wallpaper Engine 完成首次安装。
+- 找不到窗口：调整 `capture.wm_class_contains` / `capture.title_contains`，或指定 `capture.net_wm_pid`。
+- `ctl` 无法连接：确认 daemon 正在运行，且用户/会话环境匹配（`WAYLAND_DISPLAY`、`XDG_RUNTIME_DIR`）。
+- cgroup 无数据或限制无效：确认系统为 cgroup v2 并且当前用户有 delegation 权限，可在 `ctl status` 的 `status.cgroup.last_error` 查看原因。
