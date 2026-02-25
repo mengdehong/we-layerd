@@ -14,15 +14,7 @@ use std::sync::mpsc;
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
-    let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
-    let _control_server = ipc::ControlServer::start(control_tx)?;
-
-    if let Some(runtime) = &cfg.runtime {
-        if runtime.mode == RuntimeMode::VideoNative {
-            return run_video_native(runtime.video_file.as_deref(), &cfg, &control_rx);
-        }
-    }
-
+    let mut runtime_cfg = cfg.clone();
     let mut capture_match = cfg.capture.clone();
     if capture_match.title_contains.is_none() {
         if let Some(title_hint) = extract_play_in_window_hint(&cfg.wine.args) {
@@ -30,6 +22,17 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             capture_match.title_contains = Some(title_hint);
         }
     }
+    runtime_cfg.capture = capture_match.clone();
+
+    let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
+    let _control_server = ipc::ControlServer::start(control_tx, runtime_cfg.to_toml_pretty()?)?;
+
+    if let Some(runtime) = &cfg.runtime {
+        if runtime.mode == RuntimeMode::VideoNative {
+            return run_video_native(runtime.video_file.as_deref(), &cfg, &control_rx);
+        }
+    }
+
     info!(?cfg, ?capture_match, "starting we-layerd run mode");
     let wine = WineProcessHandle::spawn(&cfg.wine)?;
     wine.install_ctrlc_handler()?;

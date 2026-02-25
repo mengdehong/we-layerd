@@ -26,13 +26,16 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Ctl { action } => {
-            let cmd = match action {
-                ControlAction::Stop => ControlCommand::Stop,
-                ControlAction::Pause => ControlCommand::Pause,
-                ControlAction::Resume => ControlCommand::Resume,
-                ControlAction::Reload => ControlCommand::Reload,
-            };
-            ipc::send_command(cmd)
+            match action {
+                ControlAction::Stop => ipc::send_command(ControlCommand::Stop),
+                ControlAction::Pause => ipc::send_command(ControlCommand::Pause),
+                ControlAction::Resume => ipc::send_command(ControlCommand::Resume),
+                ControlAction::Reload => ipc::send_command(ControlCommand::Reload),
+                ControlAction::ShowConfig => {
+                    println!("{}", ipc::request_running_config()?);
+                    Ok(())
+                }
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 use std::{
     fs,
     io::{self, Read, Write},
+    net::Shutdown,
     os::fd::AsRawFd,
     os::unix::net::{SocketAddr, UnixListener, UnixStream},
     path::Path,
@@ -43,13 +44,29 @@ impl ControlCommand {
     }
 }
 
+#[derive(Debug, Clone)]
+enum ControlRequest {
+    Command(ControlCommand),
+    ShowConfig,
+}
+
+impl ControlRequest {
+    fn parse(raw: &str) -> Option<Self> {
+        let normalized = raw.trim().to_ascii_lowercase();
+        if normalized == "show-config" {
+            return Some(Self::ShowConfig);
+        }
+        ControlCommand::parse(&normalized).map(Self::Command)
+    }
+}
+
 pub struct ControlServer {
     socket_path: Option<PathBuf>,
     _instance_lock: fs::File,
 }
 
 impl ControlServer {
-    pub fn start(tx: Sender<ControlCommand>) -> Result<Self> {
+    pub fn start(tx: Sender<ControlCommand>, running_config_toml: String) -> Result<Self> {
         let instance_lock = acquire_instance_lock()?;
         let endpoint = default_endpoint()?;
         let listener = bind_listener(&endpoint)?;
@@ -63,14 +80,21 @@ impl ControlServer {
                 if stream.read_to_string(&mut buf).is_err() {
                     continue;
                 }
-                let Some(cmd) = ControlCommand::parse(&buf) else {
+                let Some(request) = ControlRequest::parse(&buf) else {
                     let _ = stream.write_all(b"ERR unknown command\n");
                     continue;
                 };
-                if tx.send(cmd).is_ok() {
-                    let _ = stream.write_all(b"OK\n");
-                } else {
-                    let _ = stream.write_all(b"ERR daemon not running\n");
+                match request {
+                    ControlRequest::ShowConfig => {
+                        let _ = stream.write_all(running_config_toml.as_bytes());
+                    }
+                    ControlRequest::Command(cmd) => {
+                        if tx.send(cmd).is_ok() {
+                            let _ = stream.write_all(b"OK\n");
+                        } else {
+                            let _ = stream.write_all(b"ERR daemon not running\n");
+                        }
+                    }
                 }
             }
         });
@@ -91,14 +115,33 @@ impl Drop for ControlServer {
 }
 
 pub fn send_command(command: ControlCommand) -> Result<()> {
+    let response = send_request(command.as_str())?;
+    if response.trim_start().starts_with("ERR") {
+        return Err(anyhow!(response.trim().to_string()));
+    }
+    Ok(())
+}
+
+pub fn request_running_config() -> Result<String> {
+    let response = send_request("show-config")?;
+    if response.trim_start().starts_with("ERR") {
+        return Err(anyhow!(response.trim().to_string()));
+    }
+    Ok(response)
+}
+
+fn send_request(request: &str) -> Result<String> {
     let mut last_error: Option<anyhow::Error> = None;
     for endpoint in control_endpoints() {
         match connect_stream(&endpoint) {
             Ok(mut stream) => {
                 stream
-                    .write_all(command.as_str().as_bytes())
-                    .with_context(|| format!("failed to send IPC command '{}'", command.as_str()))?;
-                return Ok(());
+                    .write_all(request.as_bytes())
+                    .with_context(|| format!("failed to send IPC request '{request}'"))?;
+                let _ = stream.shutdown(Shutdown::Write);
+                let mut response = String::new();
+                stream.read_to_string(&mut response).context("failed to read IPC response")?;
+                return Ok(response);
             }
             Err(err) => {
                 last_error = Some(err);
