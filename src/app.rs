@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{env, path::Path};
 
 use anyhow::{anyhow, Result};
 use tracing::{info, warn};
@@ -67,16 +67,22 @@ fn run_video_native(video_file: Option<&str>) -> Result<()> {
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow!("runtime.video_file is required when runtime.mode=video_native"))?;
 
-    info!(video, "starting native video mode via mpv");
-    let status = std::process::Command::new("mpv")
-        .arg("--loop=inf")
-        .arg("--no-terminal")
-        .arg("--no-input-default-bindings")
+    if !command_exists_in_path("mpvpaper") {
+        return Err(anyhow!(
+            "runtime.mode=video_native requires mpvpaper in PATH"
+        ));
+    }
+
+    info!(video, "starting native video mode via mpvpaper (layer-shell)");
+    let status = std::process::Command::new("mpvpaper")
+        .arg("-o")
+        .arg("no-audio loop-file=inf")
+        .arg("*")
         .arg(video)
         .status()?;
 
     if !status.success() {
-        return Err(anyhow!("mpv exited with status: {}", status));
+        return Err(anyhow!("mpvpaper exited with status: {}", status));
     }
 
     Ok(())
@@ -107,4 +113,18 @@ pub fn doctor() -> Result<()> {
 fn extract_play_in_window_hint(args: &[String]) -> Option<String> {
     let idx = args.iter().position(|arg| arg == "-playInWindow")?;
     args.get(idx + 1).cloned().filter(|s| !s.trim().is_empty())
+}
+
+fn command_exists_in_path(name: &str) -> bool {
+    let Some(path_os) = env::var_os("PATH") else {
+        return false;
+    };
+
+    for dir in env::split_paths(&path_os) {
+        if dir.join(name).is_file() {
+            return true;
+        }
+    }
+
+    false
 }

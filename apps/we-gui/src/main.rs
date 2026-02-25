@@ -30,7 +30,6 @@ struct App {
     selected_video_file: Option<PathBuf>,
     viewport_width: f32,
     layerd_available: bool,
-    mpv_available: bool,
     launch_settings: LaunchSettings,
     ui_settings: UiSettings,
     show_settings: bool,
@@ -111,32 +110,15 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            let spawn = match app.selected_type {
-                Some(WallpaperType::Video) => {
-                    if !app.mpv_available {
-                        return Task::none();
-                    }
-                    let Some(video_file) = app.selected_video_file.as_ref() else {
-                        return Task::none();
-                    };
-                    Command::new("mpv")
-                        .arg("--loop=inf")
-                        .arg("--no-terminal")
-                        .arg("--no-input-default-bindings")
-                        .arg(video_file)
-                        .spawn()
-                }
-                _ => {
-                    if !app.layerd_available {
-                        return Task::none();
-                    }
-                    Command::new("we-layerd")
-                        .arg("run")
-                        .arg("--config")
-                        .arg(&app.config_path)
-                        .spawn()
-                }
-            };
+            if !app.layerd_available {
+                return Task::none();
+            }
+
+            let spawn = Command::new("we-layerd")
+                .arg("run")
+                .arg("--config")
+                .arg(&app.config_path)
+                .spawn();
 
             match spawn {
                 Ok(child) => {
@@ -264,11 +246,11 @@ fn view(app: &App) -> Element<'_, Message> {
     .align_y(Vertical::Bottom)
     .padding(20);
 
-    let runtime_warning: Option<Element<'_, Message>> = if app.layerd_available || app.mpv_available {
+    let runtime_warning: Option<Element<'_, Message>> = if app.layerd_available {
         None
     } else {
         let warning = container(
-            text("we-layerd / mpv not found in PATH")
+            text("we-layerd not found in PATH")
                 .size(30)
                 .color(Color::from_rgb8(150, 205, 255)),
         )
@@ -345,7 +327,6 @@ impl App {
                 selected_video_file: None,
                 viewport_width: 1280.0,
                 layerd_available: command_exists_in_path("we-layerd"),
-                mpv_available: command_exists_in_path("mpv"),
                 launch_settings,
                 ui_settings,
                 show_settings: false,
