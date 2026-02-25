@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
-use libmpv::{events::Event, FileState, Mpv};
 use tracing::{info, warn};
 
 use crate::{
@@ -68,34 +67,8 @@ fn run_video_native(video_file: Option<&str>) -> Result<()> {
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow!("runtime.video_file is required when runtime.mode=video_native"))?;
 
-    info!(video, "starting native video mode via libmpv");
-    let mpv = Mpv::new().map_err(|e| anyhow!("libmpv init failed: {e:?}"))?;
-    mpv.set_property("terminal", false)
-        .map_err(|e| anyhow!("libmpv set_property terminal failed: {e:?}"))?;
-    mpv.set_property("audio", "no")
-        .map_err(|e| anyhow!("libmpv set_property audio failed: {e:?}"))?;
-    mpv.set_property("loop-file", "inf")
-        .map_err(|e| anyhow!("libmpv set_property loop-file failed: {e:?}"))?;
-    mpv.playlist_load_files(&[(video, FileState::Replace, None)])
-        .map_err(|e| anyhow!("libmpv playlist load failed: {e:?}"))?;
-
-    let mut events = mpv.create_event_context();
-    events
-        .disable_deprecated_events()
-        .map_err(|e| anyhow!("libmpv disable_deprecated_events failed: {e:?}"))?;
-
-    loop {
-        match events.wait_event(30.0) {
-            Some(Ok(Event::Shutdown)) => break,
-            Some(Ok(_)) => {}
-            Some(Err(err)) => {
-                warn!(error = ?err, "libmpv event loop error");
-            }
-            None => {}
-        }
-    }
-
-    Ok(())
+    info!(video, "starting native video mode via ffmpeg + wgpu");
+    wayland::layer_shell::run_video_background_surface(Path::new(video))
 }
 
 pub fn doctor() -> Result<()> {

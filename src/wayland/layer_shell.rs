@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -7,8 +8,8 @@ use anyhow::{Context, Result};
 use tracing::{error, info, warn};
 use wayland_client::{
     delegate_noop,
-    globals::GlobalListContents,
     globals::registry_queue_init,
+    globals::GlobalListContents,
     protocol::{
         wl_compositor::WlCompositor, wl_output::WlOutput, wl_region::WlRegion, wl_registry,
         wl_surface::WlSurface,
@@ -17,11 +18,14 @@ use wayland_client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
-    zwlr_layer_surface_v1::{Anchor, Event as LayerSurfaceEvent, KeyboardInteractivity, ZwlrLayerSurfaceV1},
+    zwlr_layer_surface_v1::{
+        Anchor, Event as LayerSurfaceEvent, KeyboardInteractivity, ZwlrLayerSurfaceV1,
+    },
 };
 
 use crate::{
     config::{CaptureConfig, ScaleMode},
+    video::decoder::VideoPlayer,
     wayland::{outputs, render_wgpu::WgpuRenderer},
     x11::{capture_xcomposite, window_finder},
 };
@@ -67,11 +71,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for AppState {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            LayerSurfaceEvent::Configure {
-                serial,
-                width,
-                height,
-            } => {
+            LayerSurfaceEvent::Configure { serial, width, height } => {
                 layer_surface.ack_configure(serial);
                 if let Some(output) = state.outputs.get_mut(*index) {
                     if !output.configured_once {
@@ -117,11 +117,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for AppState {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global {
-                name,
-                interface,
-                version,
-            } => info!(name, interface, version, "wayland global announced"),
+            wl_registry::Event::Global { name, interface, version } => {
+                info!(name, interface, version, "wayland global announced")
+            }
             wl_registry::Event::GlobalRemove { name } => {
                 warn!(name, "wayland global removed")
             }
@@ -138,24 +136,19 @@ delegate_noop!(AppState: ignore ZwlrLayerShellV1);
 
 pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
-    let (globals, mut event_queue) = registry_queue_init::<AppState>(&conn)
-        .context("failed to initialize Wayland registry")?;
+    let (globals, mut event_queue) =
+        registry_queue_init::<AppState>(&conn).context("failed to initialize Wayland registry")?;
     let qh = event_queue.handle();
 
-    let compositor: WlCompositor = globals
-        .bind(&qh, 4..=6, ())
-        .context("failed to bind wl_compositor")?;
-    let layer_shell: ZwlrLayerShellV1 = globals
-        .bind(&qh, 1..=5, ())
-        .context("failed to bind zwlr_layer_shell_v1")?;
+    let compositor: WlCompositor =
+        globals.bind(&qh, 4..=6, ()).context("failed to bind wl_compositor")?;
+    let layer_shell: ZwlrLayerShellV1 =
+        globals.bind(&qh, 1..=5, ()).context("failed to bind zwlr_layer_shell_v1")?;
 
     let globals_snapshot = globals.contents().clone_list();
     let output_globals = outputs::output_globals(&globals_snapshot);
 
-    let mut state = AppState {
-        running: true,
-        outputs: Vec::new(),
-    };
+    let mut state = AppState { running: true, outputs: Vec::new() };
 
     if output_globals.is_empty() {
         warn!("no wl_output globals reported, creating fallback layer surface");
@@ -177,11 +170,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
             let capture_window = if index == 0 {
                 run_cfg.capture_window
             } else {
-                run_cfg
-                    .output_window_map
-                    .get(&name)
-                    .copied()
-                    .or(run_cfg.capture_window)
+                run_cfg.output_window_map.get(&name).copied().or(run_cfg.capture_window)
             };
 
             create_output_surface(
@@ -218,11 +207,7 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
 
         for output in &mut state.outputs {
             if let Some(renderer) = &mut output.renderer {
-                if output
-                    .render_backoff_until
-                    .map(|until| now < until)
-                    .unwrap_or(false)
-                {
+                if output.render_backoff_until.map(|until| now < until).unwrap_or(false) {
                     continue;
                 }
 
@@ -231,69 +216,74 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
                 // If rendering is unhealthy, skip expensive capture/upload to avoid memory blow-up.
                 if output.render_fail_streak == 0 {
                     if let Some(window) = output.capture_window {
-                    if !frame_cache.contains_key(&window) {
-                        if output.capturer.is_none() {
-                            match capture_xcomposite::XCompositeCapturer::new(window) {
-                                Ok(capturer) => output.capturer = Some(capturer),
-                                Err(err) => {
-                                    warn!(error = %err, output = %output.name, window, "failed to initialize capturer");
+                        if !frame_cache.contains_key(&window) {
+                            if output.capturer.is_none() {
+                                match capture_xcomposite::XCompositeCapturer::new(window) {
+                                    Ok(capturer) => output.capturer = Some(capturer),
+                                    Err(err) => {
+                                        warn!(error = %err, output = %output.name, window, "failed to initialize capturer");
+                                    }
                                 }
                             }
-                        }
 
-                        if let Some(capturer) = output.capturer.as_mut() {
-                            match capturer.capture_frame() {
-                                Ok(frame) => {
-                                    frame_cache.insert(window, frame);
-                                }
-                                Err(err) => {
-                                    warn!(error = %err, output = %output.name, window, "capture failed for output");
-                                    output.capturer = None;
+                            if let Some(capturer) = output.capturer.as_mut() {
+                                match capturer.capture_frame() {
+                                    Ok(frame) => {
+                                        frame_cache.insert(window, frame);
+                                    }
+                                    Err(err) => {
+                                        warn!(error = %err, output = %output.name, window, "capture failed for output");
+                                        output.capturer = None;
 
-                                    if run_cfg.auto_refind_window {
-                                        let now = Instant::now();
-                                        let can_refind = output
-                                            .last_refind_attempt
-                                            .map(|t| now.duration_since(t) >= Duration::from_secs(2))
-                                            .unwrap_or(true);
-                                        if !can_refind {
-                                            continue;
-                                        }
-                                        output.last_refind_attempt = Some(now);
+                                        if run_cfg.auto_refind_window {
+                                            let now = Instant::now();
+                                            let can_refind = output
+                                                .last_refind_attempt
+                                                .map(|t| {
+                                                    now.duration_since(t) >= Duration::from_secs(2)
+                                                })
+                                                .unwrap_or(true);
+                                            if !can_refind {
+                                                continue;
+                                            }
+                                            output.last_refind_attempt = Some(now);
 
-                                        if let Ok(Some(found)) = window_finder::find_window_for_process(
-                                            &run_cfg.capture_match,
-                                            run_cfg.wine_pid,
-                                        ) {
-                                            if output.capture_window != Some(found.window) {
-                                                output.capture_window = Some(found.window);
-                                                output.capturer = None;
-                                                info!(output = %output.name, window = found.window, "rebound output to rediscovered X11 window");
+                                            if let Ok(Some(found)) =
+                                                window_finder::find_window_for_process(
+                                                    &run_cfg.capture_match,
+                                                    run_cfg.wine_pid,
+                                                )
+                                            {
+                                                if output.capture_window != Some(found.window) {
+                                                    output.capture_window = Some(found.window);
+                                                    output.capturer = None;
+                                                    info!(output = %output.name, window = found.window, "rebound output to rediscovered X11 window");
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    if let Some(frame) = frame_cache.get(&window) {
-                        if let Err(err) = renderer.upload_bgra(
-                            frame.width,
-                            frame.height,
-                            frame.stride,
-                            &frame.bgra,
-                        ) {
-                            warn!(error = %err, output = %output.name, "failed to upload frame");
+                        if let Some(frame) = frame_cache.get(&window) {
+                            if let Err(err) = renderer.upload_bgra(
+                                frame.width,
+                                frame.height,
+                                frame.stride,
+                                &frame.bgra,
+                            ) {
+                                warn!(error = %err, output = %output.name, "failed to upload frame");
+                            }
                         }
-                    }
                     }
                 }
 
                 if let Err(err) = renderer.render() {
                     output.render_fail_streak += 1;
                     let backoff_ms = (output.render_fail_streak.saturating_mul(10)).min(500);
-                    output.render_backoff_until = Some(Instant::now() + Duration::from_millis(backoff_ms));
+                    output.render_backoff_until =
+                        Some(Instant::now() + Duration::from_millis(backoff_ms));
                     if output.render_fail_streak <= 5 || output.render_fail_streak % 120 == 0 {
                         warn!(
                             error = %err,
@@ -340,15 +330,115 @@ pub fn run_single_background_surface(run_cfg: LayerRunConfig) -> Result<()> {
     Ok(())
 }
 
+pub fn run_video_background_surface(video_file: &Path) -> Result<()> {
+    let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
+    let (globals, mut event_queue) =
+        registry_queue_init::<AppState>(&conn).context("failed to initialize Wayland registry")?;
+    let qh = event_queue.handle();
+
+    let compositor: WlCompositor =
+        globals.bind(&qh, 4..=6, ()).context("failed to bind wl_compositor")?;
+    let layer_shell: ZwlrLayerShellV1 =
+        globals.bind(&qh, 1..=5, ()).context("failed to bind zwlr_layer_shell_v1")?;
+
+    let globals_snapshot = globals.contents().clone_list();
+    let output_globals = outputs::output_globals(&globals_snapshot);
+
+    let mut state = AppState { running: true, outputs: Vec::new() };
+
+    if output_globals.is_empty() {
+        warn!("no wl_output globals reported, creating fallback layer surface for video mode");
+        create_output_surface(
+            &mut state,
+            &conn,
+            &qh,
+            &compositor,
+            &layer_shell,
+            "output-fallback".to_string(),
+            None,
+            None,
+        )?;
+    } else {
+        for global in &output_globals {
+            let output = outputs::bind_output::<AppState>(globals.registry(), &qh, global)?;
+            let name = format!("output-{}", global.name);
+            create_output_surface(
+                &mut state,
+                &conn,
+                &qh,
+                &compositor,
+                &layer_shell,
+                name,
+                Some(&output),
+                None,
+            )?;
+        }
+    }
+
+    let _ = event_queue.roundtrip(&mut state);
+
+    let mut player = VideoPlayer::new(video_file)?;
+    info!(outputs = state.outputs.len(), file = %video_file.display(), "video-native loop started");
+
+    while state.running {
+        let now = Instant::now();
+        if let Err(err) = event_queue.dispatch_pending(&mut state) {
+            error!(error = %err, "wayland event dispatch failed in video mode");
+        }
+
+        if let Some(frame) = player.tick(now)? {
+            for output in &mut state.outputs {
+                if let Some(renderer) = &mut output.renderer {
+                    if let Err(err) =
+                        renderer.upload_bgra(frame.width, frame.height, frame.stride, &frame.bgra)
+                    {
+                        warn!(error = %err, output = %output.name, "failed to upload video frame");
+                    }
+                }
+            }
+        }
+
+        for output in &mut state.outputs {
+            if let Some(renderer) = &mut output.renderer {
+                if let Err(err) = renderer.render() {
+                    output.render_fail_streak += 1;
+                    let backoff_ms = (output.render_fail_streak.saturating_mul(10)).min(500);
+                    output.render_backoff_until =
+                        Some(Instant::now() + Duration::from_millis(backoff_ms));
+                    if output.render_fail_streak <= 5 || output.render_fail_streak % 120 == 0 {
+                        warn!(
+                            error = %err,
+                            output = %output.name,
+                            streak = output.render_fail_streak,
+                            backoff_ms,
+                            configured_once = output.configured_once,
+                            "video render failed for output"
+                        );
+                    }
+                } else if output.render_fail_streak > 0 {
+                    info!(
+                        output = %output.name,
+                        recovered_after = output.render_fail_streak,
+                        "video render path recovered"
+                    );
+                    output.render_fail_streak = 0;
+                    output.render_backoff_until = None;
+                }
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    Ok(())
+}
+
 pub fn probe_layer_shell_support() -> Result<bool> {
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
-    let (globals, _event_queue) = registry_queue_init::<AppState>(&conn)
-        .context("failed to initialize Wayland registry")?;
-    let present = globals
-        .contents()
-        .clone_list()
-        .iter()
-        .any(|g| g.interface == "zwlr_layer_shell_v1");
+    let (globals, _event_queue) =
+        registry_queue_init::<AppState>(&conn).context("failed to initialize Wayland registry")?;
+    let present =
+        globals.contents().clone_list().iter().any(|g| g.interface == "zwlr_layer_shell_v1");
     Ok(present)
 }
 
