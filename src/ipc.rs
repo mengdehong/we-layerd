@@ -66,11 +66,15 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-    pub fn start(tx: Sender<ControlCommand>, running_config_toml: String) -> Result<Self> {
+    pub fn start<F>(tx: Sender<ControlCommand>, status_provider: F) -> Result<Self>
+    where
+        F: Fn() -> String + Send + Sync + 'static,
+    {
         let instance_lock = acquire_instance_lock()?;
         let endpoint = default_endpoint()?;
         let listener = bind_listener(&endpoint)?;
         let socket_path = endpoint.socket_path();
+        let status_provider = std::sync::Arc::new(status_provider);
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else {
@@ -86,7 +90,8 @@ impl ControlServer {
                 };
                 match request {
                     ControlRequest::Status => {
-                        let _ = stream.write_all(running_config_toml.as_bytes());
+                        let status = status_provider();
+                        let _ = stream.write_all(status.as_bytes());
                     }
                     ControlRequest::Command(cmd) => {
                         if tx.send(cmd).is_ok() {

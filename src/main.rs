@@ -1,5 +1,6 @@
 mod app;
 mod cli;
+mod cgroup;
 mod config;
 mod ipc;
 mod logging;

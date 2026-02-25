@@ -13,6 +13,8 @@ pub struct Config {
     pub capture: CaptureConfig,
     #[serde(default)]
     pub runtime: Option<RuntimeConfig>,
+    #[serde(default)]
+    pub cgroup: CgroupConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +109,31 @@ impl Default for RuntimeWallpaperType {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CgroupConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub mode: CgroupMode,
+    #[serde(default)]
+    pub memory_max: Option<String>,
+    #[serde(default)]
+    pub cpu_max: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CgroupMode {
+    Detect,
+    LimitWine,
+}
+
+impl Default for CgroupMode {
+    fn default() -> Self {
+        Self::Detect
+    }
+}
+
 fn default_fps() -> u32 {
     30
 }
@@ -134,6 +161,7 @@ impl Default for Config {
             wine: WineConfig::default(),
             capture: CaptureConfig::default(),
             runtime: None,
+            cgroup: CgroupConfig::default(),
         }
     }
 }
@@ -166,6 +194,12 @@ impl Default for CaptureConfig {
             debug_save_frame_png: None,
             output_window_map: BTreeMap::new(),
         }
+    }
+}
+
+impl Default for CgroupConfig {
+    fn default() -> Self {
+        Self { enabled: false, mode: CgroupMode::Detect, memory_max: None, cpu_max: None }
     }
 }
 

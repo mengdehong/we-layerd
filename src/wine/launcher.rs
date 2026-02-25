@@ -59,7 +59,12 @@ impl WineProcessHandle {
         .context("failed to register Ctrl+C handler")
     }
 
-    pub fn install_exit_monitor(&self, config: WineConfig, restart_on_exit: bool) {
+    pub fn install_exit_monitor(
+        &self,
+        config: WineConfig,
+        restart_on_exit: bool,
+        on_spawn: Option<Arc<dyn Fn(u32) + Send + Sync>>,
+    ) {
         let child = self.child.clone();
         let pgid = self.pgid.clone();
         let stop = self.stop.clone();
@@ -92,6 +97,9 @@ impl WineProcessHandle {
                                 match spawn_child(&config) {
                                     Ok(new_child) => {
                                         let new_pgid = new_child.id() as i32;
+                                        if let Some(cb) = &on_spawn {
+                                            cb(new_child.id());
+                                        }
                                         info!(
                                             pid = new_child.id(),
                                             pgid = new_pgid,

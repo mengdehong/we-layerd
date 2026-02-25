@@ -1,9 +1,10 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use tracing::{info, warn};
 
 use crate::{
+    cgroup::RuntimeCgroup,
     config::{Config, RuntimeMode},
     ipc::{self, ControlCommand},
     wayland,
@@ -24,8 +25,16 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     }
     runtime_cfg.capture = capture_match.clone();
 
+    let runtime_cgroup = RuntimeCgroup::new(cfg.cgroup.clone());
+    let runtime_cfg_toml = runtime_cfg.to_toml_pretty()?;
     let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
-    let _control_server = ipc::ControlServer::start(control_tx, runtime_cfg.to_toml_pretty()?)?;
+    let status_cgroup = runtime_cgroup.clone();
+    let _control_server = ipc::ControlServer::start(control_tx, move || {
+        let mut status = runtime_cfg_toml.clone();
+        status.push_str("\n\n");
+        status.push_str(&status_cgroup.render_status_toml());
+        status
+    })?;
 
     if let Some(runtime) = &cfg.runtime {
         if runtime.mode == RuntimeMode::VideoNative {
@@ -36,8 +45,19 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     info!(?cfg, ?capture_match, "starting we-layerd run mode");
     let wine = WineProcessHandle::spawn(&cfg.wine)?;
     wine.install_ctrlc_handler()?;
-    wine.install_exit_monitor(cfg.wine.clone(), cfg.general.restart_wine_on_exit);
+    let cgroup_on_spawn = runtime_cgroup.clone();
+    let on_spawn: Arc<dyn Fn(u32) + Send + Sync> = Arc::new(move |pid| {
+        cgroup_on_spawn.on_wine_spawn(pid);
+    });
+    wine.install_exit_monitor(
+        cfg.wine.clone(),
+        cfg.general.restart_wine_on_exit,
+        Some(on_spawn.clone()),
+    );
     let wine_pid = wine.pid();
+    if let Some(pid) = wine_pid {
+        on_spawn(pid);
+    }
     info!(pid = wine_pid, "wine launcher enabled");
 
     let capture_window = match window_finder::find_window_for_process(&capture_match, wine_pid)? {
