@@ -592,8 +592,8 @@ fn sync_launch_settings(app: &mut App) {
     app.launch_settings.show_fps = app.ui_settings.show_fps;
     app.launch_settings.play_in_window_title = "WE-DEBUG-WINDOW".to_string();
     app.launch_settings.wm_class_contains = "wallpaper64".to_string();
-    app.launch_settings.x = 100;
-    app.launch_settings.y = 100;
+    app.launch_settings.x = 0;
+    app.launch_settings.y = 0;
 
     if let Ok(v) = app.ui_settings.fps_limit.parse::<u32>() {
         app.launch_settings.fps_limit = v.clamp(1, 360);
