@@ -9,6 +9,7 @@ hidden_workspace_name = "top"
 
 [wine]
 command = "wine"
+command_mode = "exe_with_args"
 args = []
 wallpaper_exe = "/home/aromatic/.local/share/Steam/steamapps/common/wallpaper_engine/wallpaper64.exe"
 

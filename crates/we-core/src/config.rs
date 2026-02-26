@@ -48,8 +48,23 @@ impl Default for ScaleMode {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WineConfig {
     pub command: String,
+    #[serde(default)]
+    pub command_mode: WineCommandMode,
     pub wallpaper_exe: String,
     pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WineCommandMode {
+    ExeWithArgs,
+    CommandOnly,
+}
+
+impl Default for WineCommandMode {
+    fn default() -> Self {
+        Self::ExeWithArgs
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -104,6 +119,9 @@ pub enum CgroupMode {
 #[derive(Debug, Clone)]
 pub struct LaunchSettings {
     pub wallpaper_exe: String,
+    pub launcher: WindowsLauncher,
+    pub wine_command: String,
+    pub proton_path: Option<String>,
     pub fps_limit: u32,
     pub show_fps: bool,
     pub width: u32,
@@ -124,6 +142,9 @@ impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
             wallpaper_exe: String::new(),
+            launcher: WindowsLauncher::Wine,
+            wine_command: "wine".to_string(),
+            proton_path: None,
             fps_limit: 30,
             show_fps: false,
             width: 2560,
@@ -140,6 +161,13 @@ impl Default for LaunchSettings {
             hidden_workspace_name: "top".to_string(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowsLauncher {
+    Wine,
+    Proton,
 }
 
 impl Default for CgroupConfig {
@@ -178,6 +206,7 @@ impl Default for AppConfig {
             },
             wine: WineConfig {
                 command: "wine".to_string(),
+                command_mode: WineCommandMode::ExeWithArgs,
                 wallpaper_exe: String::new(),
                 args: Vec::new(),
             },
@@ -204,7 +233,8 @@ pub fn build_config(
     cfg.general.show_fps = settings.show_fps;
     cfg.general.hide_debug_window = settings.hide_debug_window;
     cfg.general.hidden_workspace_name = settings.hidden_workspace_name.clone();
-    cfg.wine.command = "wine".to_string();
+    cfg.wine.command = settings.wine_command.clone();
+    cfg.wine.command_mode = WineCommandMode::ExeWithArgs;
     cfg.wine.wallpaper_exe = settings.wallpaper_exe.clone();
     cfg.capture.wm_class_contains = settings.wm_class_contains.clone();
     cfg.capture.title_contains = settings.play_in_window_title.clone();
@@ -292,6 +322,32 @@ pub fn build_config(
                 "-y".to_string(),
                 settings.y.to_string(),
             ];
+        }
+    }
+
+    if settings.launcher == WindowsLauncher::Proton {
+        if let Some(proton) = settings.proton_path.as_ref().filter(|s| !s.trim().is_empty()) {
+            let exe_path = Path::new(&settings.wallpaper_exe);
+            let launcher_exe = exe_path
+                .parent()
+                .map(|p| p.join("launcher.exe"))
+                .unwrap_or_else(|| Path::new("launcher.exe").to_path_buf());
+            let wallpaper_name = exe_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("wallpaper64.exe")
+                .to_string();
+            cfg.wine.command = proton.clone();
+            cfg.wine.command_mode = WineCommandMode::CommandOnly;
+            let mut proton_args = vec![
+                "run".to_string(),
+                launcher_exe.display().to_string(),
+                "-run".to_string(),
+                wallpaper_name,
+                "-nobrowse".to_string(),
+            ];
+            proton_args.extend(cfg.wine.args.clone());
+            cfg.wine.args = proton_args;
         }
     }
 

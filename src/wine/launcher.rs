@@ -13,7 +13,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use tracing::{info, warn};
 
-use crate::config::WineConfig;
+use crate::config::{WineCommandMode, WineConfig};
 
 pub struct WineProcessHandle {
     child: Arc<Mutex<Option<Child>>>,
@@ -178,22 +178,27 @@ impl Drop for WineProcessHandle {
 }
 
 fn spawn_child(config: &WineConfig) -> Result<Child> {
-    if config.wallpaper_exe.is_empty() {
-        return Err(anyhow!(
-            "wine.wallpaper_exe is empty; set the Wallpaper Engine executable path"
-        ));
-    }
-
-    let exe_path = Path::new(&config.wallpaper_exe);
-    if !exe_path.exists() {
-        return Err(anyhow!("Wallpaper executable does not exist: {}", exe_path.display()));
-    }
-
     let mut cmd = Command::new(&config.command);
-    cmd.arg(&config.wallpaper_exe)
-        .args(&config.args)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    match config.command_mode {
+        WineCommandMode::ExeWithArgs => {
+            if config.wallpaper_exe.is_empty() {
+                return Err(anyhow!(
+                    "wine.wallpaper_exe is empty; set the Wallpaper Engine executable path"
+                ));
+            }
+
+            let exe_path = Path::new(&config.wallpaper_exe);
+            if !exe_path.exists() {
+                return Err(anyhow!("Wallpaper executable does not exist: {}", exe_path.display()));
+            }
+            cmd.arg(&config.wallpaper_exe).args(&config.args);
+        }
+        WineCommandMode::CommandOnly => {
+            cmd.args(&config.args);
+        }
+    }
+
+    cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
     unsafe {
         cmd.pre_exec(|| {

@@ -7,6 +7,7 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 ## Features
 - Wine mode: launch `wallpaper64.exe`, capture XWayland/X11 output, render to Wayland layer-shell.
 - Native video mode: FFmpeg + `wgpu` pipeline.
+- Windows launcher mode: Wine / Proton (Proton auto-discovery from Steam paths).
 - GUI companion (`we-gui`) with tray controls.
 - Runtime control commands: `stop`, `pause`, `resume`, `reload`, `status`, `hide-window`, `show-window`.
 - Single-instance daemon lock per user.
@@ -72,6 +73,15 @@ hidden_workspace_name = "top"
 - sway: uses scratchpad behavior.
 - niri: target workspace spec; use `top` to move to the top/first workspace.
 For niri, hide flow is `move-window-to-workspace` first, then `move-window-to-floating`.
+
+Wine/Proton launch behavior:
+```toml
+[wine]
+command = "wine"
+command_mode = "exe_with_args" # exe_with_args | command_only
+```
+- `exe_with_args`: runs `command wallpaper_exe ...args` (Wine mode).
+- `command_only`: runs `command ...args` (Proton mode via `proton run ...`).
 
 ## Usage
 After `we-layerd`/`we-gui` are in `PATH`:

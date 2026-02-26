@@ -5,6 +5,7 @@
 ## 功能
 - Wine 模式：启动 `wallpaper64.exe`，捕获 XWayland/X11 画面，渲染到 Wayland layer-shell。
 - 原生视频模式：使用 FFmpeg + `wgpu` 播放视频壁纸。
+- Windows 启动器模式：支持 Wine / Proton（自动扫描 Steam 下 Proton 版本）。
 - GUI 程序 `we-gui`：壁纸浏览、配置编辑、托盘控制、运行状态查看。
 - 运行时控制命令：`stop`、`pause`、`resume`、`reload`、`status`、`hide-window`、`show-window`。
 - 单实例守护进程锁（同一用户不可重复启动）。
@@ -68,6 +69,15 @@ hidden_workspace_name = "top"
 - sway：使用 scratchpad 机制。
 - niri：作为目标工作区标识；`top` 表示最上/第一个工作区。
 在 niri 下隐藏顺序是先 `move-window-to-workspace`，再 `move-window-to-floating`。
+
+Wine / Proton 启动配置：
+```toml
+[wine]
+command = "wine"
+command_mode = "exe_with_args" # exe_with_args | command_only
+```
+- `exe_with_args`：执行 `command wallpaper_exe ...args`（Wine 模式）。
+- `command_only`：执行 `command ...args`（Proton 模式，使用 `proton run ...`）。
 
 ## 使用
 确保 `we-layerd` / `we-gui` 在 `PATH` 后：

@@ -12,10 +12,10 @@ use iced::{
 };
 use settings_panel::{
     build_settings_overlay, detect_supported_resolutions, pick_initial_resolution,
-    CgroupModeOption, ResolutionOption, UiSettings,
+    CgroupModeOption, LauncherChoice, LauncherModeOption, ResolutionOption, UiSettings,
 };
 use we_core::{
-    config::{build_config, save_config, CgroupMode, LaunchSettings},
+    config::{build_config, save_config, CgroupMode, LaunchSettings, WindowsLauncher},
     steam::{self, WallpaperEngineInstallState},
     wallpaper::{self, WallpaperEntry, WallpaperType},
 };
@@ -44,6 +44,8 @@ struct App {
     ui_settings: UiSettings,
     show_settings: bool,
     supported_resolutions: Vec<ResolutionOption>,
+    wine_commands: Vec<LauncherChoice>,
+    proton_versions: Vec<LauncherChoice>,
     install_notice: Option<String>,
     tray: Option<tray::TrayController>,
     main_window_id: Option<window::Id>,
@@ -60,6 +62,10 @@ enum Message {
     SettingsPressed,
     WallpaperExeChanged(String),
     WorkshopPathChanged(String),
+    LauncherModeSelected(LauncherModeOption),
+    WineCommandSelected(LauncherChoice),
+    ProtonVersionSelected(LauncherChoice),
+    ProtonPathChanged(String),
     PickWallpaperExe,
     PickWorkshopPath,
     WallpaperExePicked(Option<PathBuf>),
@@ -159,6 +165,26 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                     Message::Scanned,
                 );
             }
+            Task::none()
+        }
+        Message::LauncherModeSelected(value) => {
+            app.ui_settings.launcher_mode = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::WineCommandSelected(value) => {
+            app.ui_settings.wine_command = value.value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::ProtonVersionSelected(value) => {
+            app.ui_settings.proton_path = value.value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::ProtonPathChanged(value) => {
+            app.ui_settings.proton_path = value;
+            sync_launch_settings(app);
             Task::none()
         }
         Message::PickWallpaperExe => Task::perform(
@@ -370,7 +396,12 @@ fn view(app: &App, _window: window::Id) -> Element<'_, Message> {
     };
 
     let settings_overlay: Option<Element<'_, Message>> = if app.show_settings {
-        Some(build_settings_overlay(&app.ui_settings, &app.supported_resolutions))
+        Some(build_settings_overlay(
+            &app.ui_settings,
+            &app.supported_resolutions,
+            &app.wine_commands,
+            &app.proton_versions,
+        ))
     } else {
         None
     };
@@ -438,6 +469,20 @@ impl App {
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         let supported_resolutions = detect_supported_resolutions();
+        let wine_commands = steam::discover_wine_commands()
+            .into_iter()
+            .map(|v| LauncherChoice { label: v.clone(), value: v })
+            .collect::<Vec<_>>();
+        let proton_versions = steam::discover_proton_installs()
+            .into_iter()
+            .map(|p| LauncherChoice { label: p.name, value: p.proton_path.display().to_string() })
+            .collect::<Vec<_>>();
+        if let Some(first) = wine_commands.first() {
+            launch_settings.wine_command = first.value.clone();
+        }
+        if let Some(first) = proton_versions.first() {
+            launch_settings.proton_path = Some(first.value.clone());
+        }
         let selected_resolution = pick_initial_resolution(
             &supported_resolutions,
             launch_settings.width,
@@ -446,6 +491,12 @@ impl App {
         let ui_settings = UiSettings {
             wallpaper_exe: launch_settings.wallpaper_exe.clone(),
             workshop_path,
+            launcher_mode: match launch_settings.launcher {
+                WindowsLauncher::Wine => LauncherModeOption::Wine,
+                WindowsLauncher::Proton => LauncherModeOption::Proton,
+            },
+            wine_command: launch_settings.wine_command.clone(),
+            proton_path: launch_settings.proton_path.clone().unwrap_or_default(),
             fps_limit: launch_settings.fps_limit.to_string(),
             show_fps: launch_settings.show_fps,
             hide_debug_window: launch_settings.hide_debug_window,
@@ -471,6 +522,8 @@ impl App {
                 ui_settings,
                 show_settings: false,
                 supported_resolutions,
+                wine_commands,
+                proton_versions,
                 install_notice,
                 tray: tray::TrayController::new().ok(),
                 main_window_id: None,
@@ -589,6 +642,12 @@ fn make_wallpaper_card<'a>(
 
 fn sync_launch_settings(app: &mut App) {
     app.launch_settings.wallpaper_exe = app.ui_settings.wallpaper_exe.clone();
+    app.launch_settings.launcher = match app.ui_settings.launcher_mode {
+        LauncherModeOption::Wine => WindowsLauncher::Wine,
+        LauncherModeOption::Proton => WindowsLauncher::Proton,
+    };
+    app.launch_settings.wine_command = app.ui_settings.wine_command.clone();
+    app.launch_settings.proton_path = non_empty_trimmed(&app.ui_settings.proton_path);
     app.launch_settings.show_fps = app.ui_settings.show_fps;
     app.launch_settings.play_in_window_title = "WE-DEBUG-WINDOW".to_string();
     app.launch_settings.wm_class_contains = "wallpaper64".to_string();

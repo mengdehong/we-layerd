@@ -23,6 +23,9 @@ impl fmt::Display for ResolutionOption {
 pub struct UiSettings {
     pub wallpaper_exe: String,
     pub workshop_path: String,
+    pub launcher_mode: LauncherModeOption,
+    pub wine_command: String,
+    pub proton_path: String,
     pub fps_limit: String,
     pub show_fps: bool,
     pub hide_debug_window: bool,
@@ -33,6 +36,33 @@ pub struct UiSettings {
     pub cgroup_memory_max: String,
     pub cgroup_cpu_max: String,
     pub status_text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LauncherModeOption {
+    Wine,
+    Proton,
+}
+
+impl fmt::Display for LauncherModeOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Wine => write!(f, "Wine"),
+            Self::Proton => write!(f, "Proton"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LauncherChoice {
+    pub label: String,
+    pub value: String,
+}
+
+impl fmt::Display for LauncherChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.label)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,12 +83,40 @@ impl fmt::Display for CgroupModeOption {
 pub fn build_settings_overlay<'a>(
     ui_settings: &'a UiSettings,
     supported_resolutions: &'a [ResolutionOption],
+    wine_commands: &'a [LauncherChoice],
+    proton_versions: &'a [LauncherChoice],
 ) -> Element<'a, Message> {
     let wallpaper_path_display = format_path_for_display(&ui_settings.wallpaper_exe, 64);
     let workshop_path_display = format_path_for_display(&ui_settings.workshop_path, 64);
 
     let mut content = column![
         text("Settings").size(26),
+        text("Windows Launcher").size(14),
+        pick_list(
+            vec![LauncherModeOption::Wine, LauncherModeOption::Proton],
+            Some(ui_settings.launcher_mode),
+            Message::LauncherModeSelected,
+        )
+        .padding(10),
+        text("Wine Command").size(14),
+        pick_list(
+            wine_commands.to_vec(),
+            pick_selected_choice(wine_commands, &ui_settings.wine_command),
+            Message::WineCommandSelected,
+        )
+        .placeholder("Select Wine command")
+        .padding(10),
+        text("Proton Version").size(14),
+        pick_list(
+            proton_versions.to_vec(),
+            pick_selected_choice(proton_versions, &ui_settings.proton_path),
+            Message::ProtonVersionSelected,
+        )
+        .placeholder("Select Proton version")
+        .padding(10),
+        text_input("/path/to/proton", &ui_settings.proton_path)
+            .on_input(Message::ProtonPathChanged)
+            .padding(10),
         text("Wallpaper Engine Path").size(14),
         row![
             text_input("/path/to/wallpaper64.exe", &ui_settings.wallpaper_exe)
@@ -224,6 +282,10 @@ fn parse_resolutions_from_text(raw: &str) -> Vec<ResolutionOption> {
         }
     }
     result
+}
+
+fn pick_selected_choice(choices: &[LauncherChoice], value: &str) -> Option<LauncherChoice> {
+    choices.iter().find(|c| c.value == value).cloned()
 }
 
 fn format_path_for_display(path: &str, max_chars: usize) -> String {

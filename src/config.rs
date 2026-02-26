@@ -56,9 +56,24 @@ pub struct WineConfig {
     #[serde(default = "default_wine_cmd")]
     pub command: String,
     #[serde(default)]
+    pub command_mode: WineCommandMode,
+    #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub wallpaper_exe: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WineCommandMode {
+    ExeWithArgs,
+    CommandOnly,
+}
+
+impl Default for WineCommandMode {
+    fn default() -> Self {
+        Self::ExeWithArgs
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,7 +210,12 @@ impl Default for GeneralConfig {
 
 impl Default for WineConfig {
     fn default() -> Self {
-        Self { command: default_wine_cmd(), args: Vec::new(), wallpaper_exe: String::new() }
+        Self {
+            command: default_wine_cmd(),
+            command_mode: WineCommandMode::ExeWithArgs,
+            args: Vec::new(),
+            wallpaper_exe: String::new(),
+        }
     }
 }
 
