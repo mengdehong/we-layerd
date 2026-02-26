@@ -1,6 +1,7 @@
 use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
+use serde_json::Value;
 use tracing::warn;
 
 use crate::config::CaptureConfig;
@@ -58,30 +59,14 @@ impl DebugWindowVisibility {
     }
 
     fn hide_hyprland(&self) -> Result<()> {
-        let class = self.selector_class();
         let target = format!("special:{}", self.hidden_workspace_name);
-        run_cmd(
-            "hyprctl",
-            &[
-                "dispatch",
-                "movetoworkspacesilent",
-                &format!("{target},class:^(?:{class})$"),
-            ],
-        )
-        .context("hyprland hide failed")
+        let addresses = self.matching_hypr_addresses()?;
+        move_hypr_windows(&addresses, &target).context("hyprland hide failed")
     }
 
     fn show_hyprland(&self) -> Result<()> {
-        let class = self.selector_class();
-        run_cmd(
-            "hyprctl",
-            &[
-                "dispatch",
-                "movetoworkspacesilent",
-                &format!("+0,class:^(?:{class})$"),
-            ],
-        )
-        .context("hyprland show failed")
+        let addresses = self.matching_hypr_addresses()?;
+        move_hypr_windows(&addresses, "+0").context("hyprland show failed")
     }
 
     fn hide_sway(&self) -> Result<()> {
@@ -97,8 +82,10 @@ impl DebugWindowVisibility {
     }
 
     fn hide_niri(&self) -> Result<()> {
-        for id in self.matching_niri_window_ids()? {
-            let _ = run_cmd(
+        let ids = self.matching_niri_window_ids()?;
+        let mut moved = false;
+        for id in ids {
+            if run_cmd(
                 "niri",
                 &[
                     "msg",
@@ -106,18 +93,41 @@ impl DebugWindowVisibility {
                     "move-window-to-workspace",
                     "--window-id",
                     &id.to_string(),
-                    "--focus=false",
+                    "--focus",
+                    "false",
                     &self.hidden_workspace_name,
                 ],
-            );
+            )
+            .is_ok()
+                || run_cmd(
+                    "niri",
+                    &[
+                        "msg",
+                        "action",
+                        "move-window-to-workspace",
+                        "--window-id",
+                        &id.to_string(),
+                        &self.hidden_workspace_name,
+                    ],
+                )
+                .is_ok()
+            {
+                moved = true;
+            }
         }
-        Ok(())
+        if moved {
+            Ok(())
+        } else {
+            Err(anyhow!("niri hide did not move any matching window"))
+        }
     }
 
     fn show_niri(&self) -> Result<()> {
         let current_ws = current_niri_workspace_spec()?;
-        for id in self.matching_niri_window_ids()? {
-            let _ = run_cmd(
+        let ids = self.matching_niri_window_ids()?;
+        let mut moved = false;
+        for id in ids {
+            if run_cmd(
                 "niri",
                 &[
                     "msg",
@@ -127,10 +137,19 @@ impl DebugWindowVisibility {
                     &id.to_string(),
                     &current_ws,
                 ],
-            );
-            let _ = run_cmd("niri", &["msg", "action", "focus-window", "--id", &id.to_string()]);
+            )
+            .is_ok()
+            {
+                moved = true;
+                let _ =
+                    run_cmd("niri", &["msg", "action", "focus-window", "--id", &id.to_string()]);
+            }
         }
-        Ok(())
+        if moved {
+            Ok(())
+        } else {
+            Err(anyhow!("niri show did not move any matching window"))
+        }
     }
 
     fn matching_niri_window_ids(&self) -> Result<Vec<u64>> {
@@ -168,6 +187,52 @@ impl DebugWindowVisibility {
             }
         }
         Ok(ids)
+    }
+
+    fn matching_hypr_addresses(&self) -> Result<Vec<String>> {
+        let output = Command::new("hyprctl")
+            .args(["clients", "-j"])
+            .output()
+            .context("failed to query hypr clients")?;
+        if !output.status.success() {
+            return Err(anyhow!("hyprctl clients -j failed"));
+        }
+        let value: Value =
+            serde_json::from_slice(&output.stdout).context("invalid hypr clients json")?;
+        let Some(arr) = value.as_array() else {
+            return Err(anyhow!("unexpected hypr clients json"));
+        };
+
+        let class_hint = self.selector_class().to_ascii_lowercase();
+        let title_hint = self.selector_title().map(|s| s.to_ascii_lowercase());
+        let mut addresses = Vec::new();
+        for client in arr {
+            let class = client
+                .get("class")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            let initial_class = client
+                .get("initialClass")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            let title = client
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            let class_match = !class_hint.is_empty()
+                && (class.contains(&class_hint) || initial_class.contains(&class_hint));
+            let title_match = title_hint.as_ref().is_some_and(|t| title.contains(t));
+            if !(class_match || title_match) {
+                continue;
+            }
+            if let Some(addr) = client.get("address").and_then(|v| v.as_str()) {
+                addresses.push(addr.to_string());
+            }
+        }
+        Ok(addresses)
     }
 }
 
@@ -241,4 +306,22 @@ fn current_niri_workspace_spec() -> Result<String> {
         }
     }
     Err(anyhow!("cannot determine focused niri workspace"))
+}
+
+fn move_hypr_windows(addresses: &[String], workspace: &str) -> Result<()> {
+    if addresses.is_empty() {
+        return Err(anyhow!("no matching hyprland windows found"));
+    }
+    let mut moved = false;
+    for address in addresses {
+        let selector = format!("{workspace},address:{address}");
+        if run_cmd("hyprctl", &["dispatch", "movetoworkspacesilent", &selector]).is_ok() {
+            moved = true;
+        }
+    }
+    if moved {
+        Ok(())
+    } else {
+        Err(anyhow!("failed to move matching hyprland windows"))
+    }
 }
