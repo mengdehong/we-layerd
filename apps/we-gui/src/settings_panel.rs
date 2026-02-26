@@ -25,6 +25,8 @@ pub struct UiSettings {
     pub workshop_path: String,
     pub fps_limit: String,
     pub show_fps: bool,
+    pub hide_debug_window: bool,
+    pub hidden_workspace_name: String,
     pub selected_resolution: Option<ResolutionOption>,
     pub cgroup_enabled: bool,
     pub cgroup_mode: CgroupModeOption,
@@ -84,6 +86,15 @@ pub fn build_settings_overlay<'a>(
         checkbox(ui_settings.show_fps)
             .label("Show realtime FPS")
             .on_toggle(Message::ShowFpsToggled),
+        checkbox(ui_settings.hide_debug_window)
+            .label("Hide WE debug window automatically")
+            .on_toggle(Message::HideDebugWindowToggled),
+        text("Hidden Workspace").size(14),
+        text_input("top", &ui_settings.hidden_workspace_name)
+            .on_input(Message::HiddenWorkspaceNameChanged)
+            .padding(10),
+        text("Use `top` for niri first workspace; on Hyprland this is the special workspace name.")
+            .size(12),
         text("Resolution").size(14),
         pick_list(
             supported_resolutions.to_vec(),

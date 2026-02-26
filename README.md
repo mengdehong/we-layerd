@@ -8,7 +8,6 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 - Wine mode: launch `wallpaper64.exe`, capture XWayland/X11 output, render to Wayland layer-shell.
 - Native video mode: FFmpeg + `wgpu` pipeline.
 - GUI companion (`we-gui`) with tray controls.
-- Runtime control commands: `stop`, `pause`, `resume`, `reload`, `status`.
 - Runtime control commands: `stop`, `pause`, `resume`, `reload`, `status`, `hide-window`, `show-window`.
 - Single-instance daemon lock per user.
 - Optional cgroup monitor/limit support.
@@ -26,7 +25,7 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 
 Example packages (Arch Linux):
 ```bash
-sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine
+sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr
 ```
 
 ## Build
@@ -66,9 +65,13 @@ Debug window visibility:
 ```toml
 [general]
 hide_debug_window = true
-hidden_workspace_name = "we-hidden"
+hidden_workspace_name = "top"
 ```
-`hide_debug_window` defaults to `true` and attempts to hide the WE debug window using compositor-native mechanisms (Hyprland special workspace, sway scratchpad, niri hidden workspace workflow).
+`hide_debug_window` defaults to `true`. `hidden_workspace_name` controls the hide target:
+- Hyprland: special workspace name (`special:<name>`).
+- sway: uses scratchpad behavior.
+- niri: target workspace spec; use `top` to move to the top/first workspace.
+For niri, hide flow is `move-window-to-workspace` first, then `move-window-to-floating`.
 
 ## Usage
 After `we-layerd`/`we-gui` are in `PATH`:

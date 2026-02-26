@@ -163,7 +163,7 @@ fn default_hide_debug_window() -> bool {
 }
 
 fn default_hidden_workspace_name() -> String {
-    "we-hidden".to_string()
+    "top".to_string()
 }
 
 impl Default for Config {

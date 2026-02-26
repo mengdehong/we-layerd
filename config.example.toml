@@ -5,7 +5,7 @@ refind_window_on_capture_error = true
 show_fps = false
 fps_report_interval_secs = 1
 hide_debug_window = true
-hidden_workspace_name = "we-hidden"
+hidden_workspace_name = "top"
 
 [wine]
 command = "wine"

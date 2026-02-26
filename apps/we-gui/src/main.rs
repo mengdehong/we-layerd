@@ -66,6 +66,8 @@ enum Message {
     WorkshopPathPicked(Option<PathBuf>),
     FpsLimitChanged(String),
     ShowFpsToggled(bool),
+    HideDebugWindowToggled(bool),
+    HiddenWorkspaceNameChanged(String),
     ResolutionSelected(settings_panel::ResolutionOption),
     CgroupEnabledToggled(bool),
     CgroupModeSelected(CgroupModeOption),
@@ -194,6 +196,16 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ShowFpsToggled(value) => {
             app.ui_settings.show_fps = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::HideDebugWindowToggled(value) => {
+            app.ui_settings.hide_debug_window = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::HiddenWorkspaceNameChanged(value) => {
+            app.ui_settings.hidden_workspace_name = value;
             sync_launch_settings(app);
             Task::none()
         }
@@ -436,6 +448,8 @@ impl App {
             workshop_path,
             fps_limit: launch_settings.fps_limit.to_string(),
             show_fps: launch_settings.show_fps,
+            hide_debug_window: launch_settings.hide_debug_window,
+            hidden_workspace_name: launch_settings.hidden_workspace_name.clone(),
             selected_resolution,
             cgroup_enabled: false,
             cgroup_mode: CgroupModeOption::Detect,
@@ -595,6 +609,8 @@ fn sync_launch_settings(app: &mut App) {
     };
     app.launch_settings.cgroup_memory_max = non_empty_trimmed(&app.ui_settings.cgroup_memory_max);
     app.launch_settings.cgroup_cpu_max = non_empty_trimmed(&app.ui_settings.cgroup_cpu_max);
+    app.launch_settings.hide_debug_window = app.ui_settings.hide_debug_window;
+    app.launch_settings.hidden_workspace_name = app.ui_settings.hidden_workspace_name.clone();
 }
 
 async fn fetch_runtime_status() -> Result<String, String> {

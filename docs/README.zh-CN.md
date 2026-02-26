@@ -6,7 +6,7 @@
 - Wine 模式：启动 `wallpaper64.exe`，捕获 XWayland/X11 画面，渲染到 Wayland layer-shell。
 - 原生视频模式：使用 FFmpeg + `wgpu` 播放视频壁纸。
 - GUI 程序 `we-gui`：壁纸浏览、配置编辑、托盘控制、运行状态查看。
-- 运行时控制命令：`stop`、`pause`、`resume`、`reload`、`status`。
+- 运行时控制命令：`stop`、`pause`、`resume`、`reload`、`status`、`hide-window`、`show-window`。
 - 单实例守护进程锁（同一用户不可重复启动）。
 - 可选 cgroup 监控/限制。
 
@@ -22,7 +22,7 @@
 
 Arch Linux 依赖示例：
 ```bash
-sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine
+sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr
 ```
 
 ## 构建
@@ -57,6 +57,18 @@ memory_max = "max"   # 可选，如 "2147483648"
 cpu_max = "max 100000" # 可选，如 "50000 100000"
 ```
 
+调试窗口隐藏配置：
+```toml
+[general]
+hide_debug_window = true
+hidden_workspace_name = "top"
+```
+`hidden_workspace_name` 的行为：
+- Hyprland：作为 special workspace 名称（`special:<name>`）。
+- sway：使用 scratchpad 机制。
+- niri：作为目标工作区标识；`top` 表示最上/第一个工作区。
+在 niri 下隐藏顺序是先 `move-window-to-workspace`，再 `move-window-to-floating`。
+
 ## 使用
 确保 `we-layerd` / `we-gui` 在 `PATH` 后：
 
@@ -77,6 +89,8 @@ we-layerd ctl pause
 we-layerd ctl resume
 we-layerd ctl reload
 we-layerd ctl status
+we-layerd ctl hide-window
+we-layerd ctl show-window
 ```
 
 其他命令：

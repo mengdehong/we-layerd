@@ -1,7 +1,11 @@
-use std::process::Command;
+use std::{
+    io::{BufRead, BufReader, Write},
+    os::unix::net::UnixStream,
+    process::Command,
+};
 
 use anyhow::{anyhow, Context, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tracing::warn;
 
 use crate::config::CaptureConfig;
@@ -82,37 +86,16 @@ impl DebugWindowVisibility {
     }
 
     fn hide_niri(&self) -> Result<()> {
+        let target_ws_id = target_niri_workspace_id(&self.hidden_workspace_name)?;
         let ids = self.matching_niri_window_ids()?;
         let mut moved = false;
         for id in ids {
-            if run_cmd(
-                "niri",
-                &[
-                    "msg",
-                    "action",
-                    "move-window-to-workspace",
-                    "--window-id",
-                    &id.to_string(),
-                    "--focus",
-                    "false",
-                    &self.hidden_workspace_name,
-                ],
-            )
-            .is_ok()
-                || run_cmd(
-                    "niri",
-                    &[
-                        "msg",
-                        "action",
-                        "move-window-to-workspace",
-                        "--window-id",
-                        &id.to_string(),
-                        &self.hidden_workspace_name,
-                    ],
-                )
-                .is_ok()
-            {
+            if move_niri_window_to_workspace_id(id, target_ws_id, false).is_ok() {
                 moved = true;
+                let _ = run_cmd(
+                    "niri",
+                    &["msg", "action", "move-window-to-floating", "--id", &id.to_string()],
+                );
             }
         }
         if moved {
@@ -123,23 +106,11 @@ impl DebugWindowVisibility {
     }
 
     fn show_niri(&self) -> Result<()> {
-        let current_ws = current_niri_workspace_spec()?;
+        let current_ws_id = current_niri_workspace_id()?;
         let ids = self.matching_niri_window_ids()?;
         let mut moved = false;
         for id in ids {
-            if run_cmd(
-                "niri",
-                &[
-                    "msg",
-                    "action",
-                    "move-window-to-workspace",
-                    "--window-id",
-                    &id.to_string(),
-                    &current_ws,
-                ],
-            )
-            .is_ok()
-            {
+            if move_niri_window_to_workspace_id(id, current_ws_id, true).is_ok() {
                 moved = true;
                 let _ =
                     run_cmd("niri", &["msg", "action", "focus-window", "--id", &id.to_string()]);
@@ -274,7 +245,74 @@ fn detect_wm() -> DesktopWm {
     DesktopWm::Unknown
 }
 
-fn current_niri_workspace_spec() -> Result<String> {
+fn current_niri_workspace_id() -> Result<u64> {
+    let arr = query_niri_workspaces()?;
+    for ws in arr {
+        let focused = ws.get("is_focused").and_then(|v| v.as_bool()).unwrap_or(false)
+            || ws.get("is_active").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !focused {
+            continue;
+        }
+        if let Some(id) = ws.get("id").and_then(|v| v.as_u64()) {
+            return Ok(id);
+        }
+    }
+    Err(anyhow!("cannot determine focused niri workspace"))
+}
+
+fn target_niri_workspace_id(configured: &str) -> Result<u64> {
+    let trimmed = configured.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("top") {
+        return top_niri_workspace_id();
+    }
+    if let Ok(id) = trimmed.parse::<u64>() {
+        return Ok(id);
+    }
+    workspace_id_by_name(trimmed)
+}
+
+fn top_niri_workspace_id() -> Result<u64> {
+    let arr = query_niri_workspaces()?;
+    let mut best_idx: Option<i64> = None;
+    let mut best_id: Option<u64> = None;
+
+    for ws in arr {
+        let Some(idx) = ws.get("idx").and_then(|v| v.as_i64()) else {
+            continue;
+        };
+        let Some(id) = ws.get("id").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        let should_replace = match best_idx {
+            Some(best) => idx < best,
+            None => true,
+        };
+        if should_replace {
+            best_idx = Some(idx);
+            best_id = Some(id);
+        }
+    }
+
+    if let Some(id) = best_id {
+        return Ok(id);
+    }
+    Err(anyhow!("cannot determine top niri workspace id"))
+}
+
+fn workspace_id_by_name(name: &str) -> Result<u64> {
+    let arr = query_niri_workspaces()?;
+    for ws in arr {
+        let ws_name = ws.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+        if ws_name == name {
+            if let Some(id) = ws.get("id").and_then(|v| v.as_u64()) {
+                return Ok(id);
+            }
+        }
+    }
+    Err(anyhow!("cannot resolve niri workspace id by name: {name}"))
+}
+
+fn query_niri_workspaces() -> Result<Vec<Value>> {
     let output = Command::new("niri")
         .args(["msg", "-j", "workspaces"])
         .output()
@@ -287,25 +325,50 @@ fn current_niri_workspace_spec() -> Result<String> {
     let Some(arr) = value.as_array() else {
         return Err(anyhow!("unexpected niri workspace json"));
     };
-    for ws in arr {
-        let focused = ws.get("is_focused").and_then(|v| v.as_bool()).unwrap_or(false)
-            || ws.get("is_active").and_then(|v| v.as_bool()).unwrap_or(false);
-        if !focused {
-            continue;
-        }
-        if let Some(name) = ws.get("name").and_then(|v| v.as_str()) {
-            if !name.is_empty() {
-                return Ok(name.to_string());
+    Ok(arr.clone())
+}
+
+fn move_niri_window_to_workspace_id(window_id: u64, workspace_id: u64, focus: bool) -> Result<()> {
+    let req = json!({
+        "Action": {
+            "MoveWindowToWorkspace": {
+                "window_id": window_id,
+                "reference": { "Id": workspace_id },
+                "focus": focus
             }
         }
-        if let Some(idx) = ws.get("idx").and_then(|v| v.as_i64()) {
-            return Ok(idx.to_string());
-        }
-        if let Some(id) = ws.get("id").and_then(|v| v.as_i64()) {
-            return Ok(id.to_string());
-        }
+    });
+    niri_send_request(req).map(|_| ())
+}
+
+fn niri_send_request(req: Value) -> Result<Value> {
+    let socket_path =
+        std::env::var("NIRI_SOCKET").context("NIRI_SOCKET is not set for niri IPC access")?;
+    let mut stream =
+        UnixStream::connect(&socket_path).with_context(|| format!("cannot connect {socket_path}"))?;
+    let line = format!("{}\n", req);
+    stream
+        .write_all(line.as_bytes())
+        .context("failed to write niri IPC request")?;
+    stream.flush().context("failed to flush niri IPC request")?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .context("failed to read niri IPC reply")?;
+    let line = line.trim();
+    if line.is_empty() {
+        return Err(anyhow!("empty niri IPC reply"));
     }
-    Err(anyhow!("cannot determine focused niri workspace"))
+    let reply: Value = serde_json::from_str(line).context("invalid niri IPC reply JSON")?;
+    if let Some(err) = reply.get("Err") {
+        return Err(anyhow!("niri IPC action error: {err}"));
+    }
+    if reply.get("Ok").is_some() {
+        return Ok(reply);
+    }
+    Err(anyhow!("unexpected niri IPC reply: {reply}"))
 }
 
 fn move_hypr_windows(addresses: &[String], workspace: &str) -> Result<()> {

@@ -137,7 +137,7 @@ impl Default for LaunchSettings {
             cgroup_memory_max: None,
             cgroup_cpu_max: None,
             hide_debug_window: true,
-            hidden_workspace_name: "we-hidden".to_string(),
+            hidden_workspace_name: "top".to_string(),
         }
     }
 }
@@ -158,7 +158,7 @@ impl Default for GeneralConfig {
             fps_report_interval_secs: 1,
             scale_mode: ScaleMode::Cover,
             hide_debug_window: true,
-            hidden_workspace_name: "we-hidden".to_string(),
+            hidden_workspace_name: "top".to_string(),
         }
     }
 }
@@ -174,7 +174,7 @@ impl Default for AppConfig {
                 fps_report_interval_secs: 1,
                 scale_mode: ScaleMode::Cover,
                 hide_debug_window: true,
-                hidden_workspace_name: "we-hidden".to_string(),
+                hidden_workspace_name: "top".to_string(),
             },
             wine: WineConfig {
                 command: "wine".to_string(),
