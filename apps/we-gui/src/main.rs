@@ -200,7 +200,11 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::PickWallpaperExe => Task::perform(
-            async { rfd::FileDialog::new().set_title("Select wallpaper64.exe").pick_file() },
+            async {
+                rfd::FileDialog::new()
+                    .set_title("Select wallpaper64.exe / wallpaper32.exe")
+                    .pick_file()
+            },
             Message::WallpaperExePicked,
         ),
         Message::PickWorkshopPath => Task::perform(
@@ -665,7 +669,9 @@ fn sync_launch_settings(app: &mut App) {
     app.launch_settings.proton_path = non_empty_trimmed(&app.ui_settings.proton_path);
     app.launch_settings.show_fps = app.ui_settings.show_fps;
     app.launch_settings.play_in_window_title = "WE-DEBUG-WINDOW".to_string();
-    app.launch_settings.wm_class_contains = "wallpaper64".to_string();
+    app.launch_settings.wm_class_contains =
+        infer_wm_class(app.ui_settings.launcher_mode, app.ui_settings.executable_variant)
+            .to_string();
     app.launch_settings.x = 0;
     app.launch_settings.y = 0;
 
@@ -722,6 +728,16 @@ fn infer_executable_variant(path: &str) -> ExecutableVariantOption {
         ExecutableVariantOption::Wallpaper32
     } else {
         ExecutableVariantOption::Wallpaper64
+    }
+}
+
+fn infer_wm_class(launcher: LauncherModeOption, variant: ExecutableVariantOption) -> &'static str {
+    match launcher {
+        LauncherModeOption::Proton => "steam_proton",
+        LauncherModeOption::Wine => match variant {
+            ExecutableVariantOption::Wallpaper64 => "wallpaper64",
+            ExecutableVariantOption::Wallpaper32 => "wallpaper32",
+        },
     }
 }
 
