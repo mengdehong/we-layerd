@@ -179,6 +179,7 @@ impl Drop for WineProcessHandle {
 
 fn spawn_child(config: &WineConfig) -> Result<Child> {
     let mut cmd = Command::new(&config.command);
+    let mut working_dir: Option<&Path> = None;
     match config.command_mode {
         WineCommandMode::ExeWithArgs => {
             if config.wallpaper_exe.is_empty() {
@@ -191,11 +192,19 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
             if !exe_path.exists() {
                 return Err(anyhow!("Wallpaper executable does not exist: {}", exe_path.display()));
             }
+            working_dir = exe_path.parent();
             cmd.arg(&config.wallpaper_exe).args(&config.args);
         }
         WineCommandMode::CommandOnly => {
+            if !config.wallpaper_exe.trim().is_empty() {
+                working_dir = Path::new(&config.wallpaper_exe).parent();
+            }
             cmd.args(&config.args);
         }
+    }
+
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
     }
 
     if !config.env.is_empty() {
