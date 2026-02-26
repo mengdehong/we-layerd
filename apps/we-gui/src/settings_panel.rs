@@ -156,9 +156,9 @@ pub fn build_settings_overlay<'a>(
 }
 
 pub fn detect_supported_resolutions() -> Vec<ResolutionOption> {
-    let mut values = parse_xrandr_resolutions();
+    let mut values = parse_wlrandr_resolutions();
     if values.is_empty() {
-        values = parse_wlrandr_resolutions();
+        values = parse_xrandr_resolutions();
     }
     if values.is_empty() {
         values.push(ResolutionOption { width: 1920, height: 1080 });
