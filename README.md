@@ -9,6 +9,7 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 - Native video mode: FFmpeg + `wgpu` pipeline.
 - GUI companion (`we-gui`) with tray controls.
 - Runtime control commands: `stop`, `pause`, `resume`, `reload`, `status`.
+- Runtime control commands: `stop`, `pause`, `resume`, `reload`, `status`, `hide-window`, `show-window`.
 - Single-instance daemon lock per user.
 - Optional cgroup monitor/limit support.
 
@@ -61,6 +62,14 @@ memory_max = "max"   # optional, e.g. "2147483648"
 cpu_max = "max 100000" # optional, e.g. "50000 100000"
 ```
 
+Debug window visibility:
+```toml
+[general]
+hide_debug_window = true
+hidden_workspace_name = "we-hidden"
+```
+`hide_debug_window` defaults to `true` and attempts to hide the WE debug window using compositor-native mechanisms (Hyprland special workspace, sway scratchpad, niri hidden workspace workflow).
+
 ## Usage
 After `we-layerd`/`we-gui` are in `PATH`:
 
@@ -81,6 +90,8 @@ we-layerd ctl pause
 we-layerd ctl resume
 we-layerd ctl reload
 we-layerd ctl status
+we-layerd ctl hide-window
+we-layerd ctl show-window
 ```
 
 Other commands:

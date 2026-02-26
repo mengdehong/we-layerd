@@ -39,4 +39,6 @@ pub enum ControlAction {
     Resume,
     Reload,
     Status,
+    HideWindow,
+    ShowWindow,
 }

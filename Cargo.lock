@@ -5724,6 +5724,7 @@ dependencies = [
  "pollster 0.3.0",
  "raw-window-handle",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "toml",
  "tracing",

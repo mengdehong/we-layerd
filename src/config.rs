@@ -31,6 +31,10 @@ pub struct GeneralConfig {
     pub fps_report_interval_secs: u64,
     #[serde(default)]
     pub scale_mode: ScaleMode,
+    #[serde(default = "default_hide_debug_window")]
+    pub hide_debug_window: bool,
+    #[serde(default = "default_hidden_workspace_name")]
+    pub hidden_workspace_name: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -154,6 +158,14 @@ fn default_fps_report_interval_secs() -> u64 {
     1
 }
 
+fn default_hide_debug_window() -> bool {
+    true
+}
+
+fn default_hidden_workspace_name() -> String {
+    "we-hidden".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -175,6 +187,8 @@ impl Default for GeneralConfig {
             show_fps: false,
             fps_report_interval_secs: default_fps_report_interval_secs(),
             scale_mode: ScaleMode::default(),
+            hide_debug_window: default_hide_debug_window(),
+            hidden_workspace_name: default_hidden_workspace_name(),
         }
     }
 }

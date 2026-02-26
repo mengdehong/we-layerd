@@ -21,6 +21,8 @@ pub enum ControlCommand {
     Pause,
     Resume,
     Reload,
+    HideWindow,
+    ShowWindow,
 }
 
 impl ControlCommand {
@@ -30,6 +32,8 @@ impl ControlCommand {
             Self::Pause => "pause",
             Self::Resume => "resume",
             Self::Reload => "reload",
+            Self::HideWindow => "hide-window",
+            Self::ShowWindow => "show-window",
         }
     }
 
@@ -39,6 +43,8 @@ impl ControlCommand {
             "pause" => Some(Self::Pause),
             "resume" => Some(Self::Resume),
             "reload" => Some(Self::Reload),
+            "hide-window" => Some(Self::HideWindow),
+            "show-window" => Some(Self::ShowWindow),
             _ => None,
         }
     }
@@ -66,15 +72,17 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-    pub fn start<F>(tx: Sender<ControlCommand>, status_provider: F) -> Result<Self>
+    pub fn start<F, H>(tx: Sender<ControlCommand>, status_provider: F, command_handler: H) -> Result<Self>
     where
         F: Fn() -> String + Send + Sync + 'static,
+        H: Fn(ControlCommand) -> Result<bool> + Send + Sync + 'static,
     {
         let instance_lock = acquire_instance_lock()?;
         let endpoint = default_endpoint()?;
         let listener = bind_listener(&endpoint)?;
         let socket_path = endpoint.socket_path();
         let status_provider = std::sync::Arc::new(status_provider);
+        let command_handler = std::sync::Arc::new(command_handler);
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else {
@@ -94,6 +102,17 @@ impl ControlServer {
                         let _ = stream.write_all(status.as_bytes());
                     }
                     ControlRequest::Command(cmd) => {
+                        match command_handler(cmd) {
+                            Ok(true) => {
+                                let _ = stream.write_all(b"OK\n");
+                                continue;
+                            }
+                            Ok(false) => {}
+                            Err(err) => {
+                                let _ = stream.write_all(format!("ERR {err}\n").as_bytes());
+                                continue;
+                            }
+                        }
                         if tx.send(cmd).is_ok() {
                             let _ = stream.write_all(b"OK\n");
                         } else {

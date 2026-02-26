@@ -27,6 +27,8 @@ pub struct GeneralConfig {
     pub show_fps: bool,
     pub fps_report_interval_secs: u64,
     pub scale_mode: ScaleMode,
+    pub hide_debug_window: bool,
+    pub hidden_workspace_name: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -114,6 +116,8 @@ pub struct LaunchSettings {
     pub cgroup_mode: CgroupMode,
     pub cgroup_memory_max: Option<String>,
     pub cgroup_cpu_max: Option<String>,
+    pub hide_debug_window: bool,
+    pub hidden_workspace_name: String,
 }
 
 impl Default for LaunchSettings {
@@ -132,6 +136,8 @@ impl Default for LaunchSettings {
             cgroup_mode: CgroupMode::Detect,
             cgroup_memory_max: None,
             cgroup_cpu_max: None,
+            hide_debug_window: true,
+            hidden_workspace_name: "we-hidden".to_string(),
         }
     }
 }
@@ -151,6 +157,8 @@ impl Default for GeneralConfig {
             show_fps: false,
             fps_report_interval_secs: 1,
             scale_mode: ScaleMode::Cover,
+            hide_debug_window: true,
+            hidden_workspace_name: "we-hidden".to_string(),
         }
     }
 }
@@ -165,6 +173,8 @@ impl Default for AppConfig {
                 show_fps: false,
                 fps_report_interval_secs: 1,
                 scale_mode: ScaleMode::Cover,
+                hide_debug_window: true,
+                hidden_workspace_name: "we-hidden".to_string(),
             },
             wine: WineConfig {
                 command: "wine".to_string(),
@@ -192,6 +202,8 @@ pub fn build_config(
 
     cfg.general.fps_limit = settings.fps_limit;
     cfg.general.show_fps = settings.show_fps;
+    cfg.general.hide_debug_window = settings.hide_debug_window;
+    cfg.general.hidden_workspace_name = settings.hidden_workspace_name.clone();
     cfg.wine.command = "wine".to_string();
     cfg.wine.wallpaper_exe = settings.wallpaper_exe.clone();
     cfg.capture.wm_class_contains = settings.wm_class_contains.clone();

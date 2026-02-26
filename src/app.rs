@@ -8,6 +8,7 @@ use crate::{
     config::{Config, RuntimeMode},
     ipc::{self, ControlCommand},
     wayland,
+    wm_visibility::DebugWindowVisibility,
     wine::launcher::WineProcessHandle,
     x11::{capture_xcomposite, window_finder},
 };
@@ -29,11 +30,27 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let runtime_cfg_toml = runtime_cfg.to_toml_pretty()?;
     let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
     let status_cgroup = runtime_cgroup.clone();
+    let debug_visibility = DebugWindowVisibility::new(
+        cfg.general.hide_debug_window,
+        cfg.general.hidden_workspace_name.clone(),
+        &capture_match,
+    );
+    let handler_visibility = debug_visibility.clone();
     let _control_server = ipc::ControlServer::start(control_tx, move || {
         let mut status = runtime_cfg_toml.clone();
         status.push_str("\n\n");
         status.push_str(&status_cgroup.render_status_toml());
         status
+    }, move |cmd| match cmd {
+        ControlCommand::HideWindow => {
+            handler_visibility.hide()?;
+            Ok(true)
+        }
+        ControlCommand::ShowWindow => {
+            handler_visibility.show()?;
+            Ok(true)
+        }
+        _ => Ok(false),
     })?;
 
     if let Some(runtime) = &cfg.runtime {
@@ -63,6 +80,11 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let capture_window = match window_finder::find_window_for_process(&capture_match, wine_pid)? {
         Some(found) => {
             info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
+            if debug_visibility.auto_hide {
+                if let Err(err) = debug_visibility.hide() {
+                    warn!(error = %err, "failed to auto-hide debug window");
+                }
+            }
             if let Some(path) = cfg.capture.debug_save_frame_png.as_deref() {
                 let frame = capture_xcomposite::capture_single_frame(found.window)?;
                 capture_xcomposite::save_frame_png(&frame, Path::new(path))?;

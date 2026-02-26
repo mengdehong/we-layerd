@@ -6,6 +6,7 @@ mod ipc;
 mod logging;
 mod video;
 mod wayland;
+mod wm_visibility;
 mod wine;
 mod x11;
 
@@ -32,6 +33,8 @@ fn main() -> Result<()> {
                 ControlAction::Pause => ipc::send_command(ControlCommand::Pause),
                 ControlAction::Resume => ipc::send_command(ControlCommand::Resume),
                 ControlAction::Reload => ipc::send_command(ControlCommand::Reload),
+                ControlAction::HideWindow => ipc::send_command(ControlCommand::HideWindow),
+                ControlAction::ShowWindow => ipc::send_command(ControlCommand::ShowWindow),
                 ControlAction::Status => {
                     println!("{}", ipc::request_running_config()?);
                     Ok(())

@@ -544,6 +544,7 @@ fn process_control(
             Ok(ControlCommand::Reload) => {
                 *running = false;
             }
+            Ok(ControlCommand::HideWindow) | Ok(ControlCommand::ShowWindow) => {}
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => break,
         }
