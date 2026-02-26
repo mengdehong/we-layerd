@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::wallpaper::WallpaperType;
+use crate::{steam::WALLPAPER_ENGINE_APP_ID, wallpaper::WallpaperType};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -52,6 +52,8 @@ pub struct WineConfig {
     pub command_mode: WineCommandMode,
     pub wallpaper_exe: String,
     pub args: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -209,6 +211,7 @@ impl Default for AppConfig {
                 command_mode: WineCommandMode::ExeWithArgs,
                 wallpaper_exe: String::new(),
                 args: Vec::new(),
+                env: BTreeMap::new(),
             },
             capture: CaptureConfig {
                 wm_class_contains: "wallpaper64".to_string(),
@@ -236,6 +239,7 @@ pub fn build_config(
     cfg.wine.command = settings.wine_command.clone();
     cfg.wine.command_mode = WineCommandMode::ExeWithArgs;
     cfg.wine.wallpaper_exe = settings.wallpaper_exe.clone();
+    cfg.wine.env.clear();
     cfg.capture.wm_class_contains = settings.wm_class_contains.clone();
     cfg.capture.title_contains = settings.play_in_window_title.clone();
     cfg.cgroup.enabled = settings.cgroup_enabled;
@@ -348,10 +352,46 @@ pub fn build_config(
             ];
             proton_args.extend(cfg.wine.args.clone());
             cfg.wine.args = proton_args;
+            if let Some(steam_root) = derive_steam_root_from_proton_path(proton) {
+                cfg.wine.env.insert(
+                    "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
+                    steam_root.display().to_string(),
+                );
+                cfg.wine.env.insert(
+                    "STEAM_COMPAT_DATA_PATH".to_string(),
+                    steam_root
+                        .join("steamapps")
+                        .join("compatdata")
+                        .join(WALLPAPER_ENGINE_APP_ID.to_string())
+                        .display()
+                        .to_string(),
+                );
+            }
         }
     }
 
     cfg
+}
+
+fn derive_steam_root_from_proton_path(proton_path: &str) -> Option<std::path::PathBuf> {
+    let p = Path::new(proton_path);
+    let parent = p.parent()?;
+    let parent_name = parent.file_name()?.to_str()?;
+    if parent_name.is_empty() {
+        return None;
+    }
+
+    if parent.parent()?.file_name()?.to_str()? == "common"
+        && parent.parent()?.parent()?.file_name()?.to_str()? == "steamapps"
+    {
+        return parent.parent()?.parent()?.parent().map(|v| v.to_path_buf());
+    }
+
+    if parent.parent()?.file_name()?.to_str()? == "compatibilitytools.d" {
+        return parent.parent()?.parent().map(|v| v.to_path_buf());
+    }
+
+    None
 }
 
 pub fn save_config(path: &Path, config: &AppConfig) -> Result<()> {

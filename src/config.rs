@@ -61,6 +61,8 @@ pub struct WineConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub wallpaper_exe: String,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -215,6 +217,7 @@ impl Default for WineConfig {
             command_mode: WineCommandMode::ExeWithArgs,
             args: Vec::new(),
             wallpaper_exe: String::new(),
+            env: BTreeMap::new(),
         }
     }
 }

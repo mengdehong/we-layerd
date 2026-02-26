@@ -198,6 +198,10 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
         }
     }
 
+    if !config.env.is_empty() {
+        cmd.envs(config.env.iter());
+    }
+
     cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
     unsafe {
