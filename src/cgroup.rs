@@ -17,11 +17,7 @@ pub struct RuntimeCgroup {
 
 impl RuntimeCgroup {
     pub fn new(cfg: CgroupConfig) -> Self {
-        Self {
-            cfg,
-            wine_pid: Arc::new(Mutex::new(None)),
-            last_error: Arc::new(Mutex::new(None)),
-        }
+        Self { cfg, wine_pid: Arc::new(Mutex::new(None)), last_error: Arc::new(Mutex::new(None)) }
     }
 
     pub fn on_wine_spawn(&self, pid: u32) {
@@ -125,7 +121,8 @@ fn append_proc_cgroup_stats(out: &mut String, prefix: &str, pid: u32) {
 fn append_limited_wine_group_stats(out: &mut String) {
     if let Ok(path) = wine_limit_group_path_abs() {
         if path.exists() {
-            let display = path.strip_prefix("/sys/fs/cgroup").unwrap_or(&path).display().to_string();
+            let display =
+                path.strip_prefix("/sys/fs/cgroup").unwrap_or(&path).display().to_string();
             out.push_str(&format!("wine_limit_cgroup = \"{}\"\n", escape_toml(&display)));
             if let Ok(Some(usage)) = read_cpu_usage_usec_from_abs(&path) {
                 out.push_str(&format!("wine_limit_cpu_usage_usec = {}\n", usage));
@@ -144,19 +141,16 @@ fn attach_wine_to_limited_group(pid: u32, cfg: &CgroupConfig) -> Result<()> {
         .with_context(|| format!("failed to create cgroup {}", group_path.display()))?;
 
     if let Some(memory_max) = &cfg.memory_max {
-        fs::write(group_path.join("memory.max"), memory_max.as_bytes()).with_context(|| {
-            format!("failed to write memory.max in {}", group_path.display())
-        })?;
+        fs::write(group_path.join("memory.max"), memory_max.as_bytes())
+            .with_context(|| format!("failed to write memory.max in {}", group_path.display()))?;
     }
     if let Some(cpu_max) = &cfg.cpu_max {
-        fs::write(group_path.join("cpu.max"), cpu_max.as_bytes()).with_context(|| {
-            format!("failed to write cpu.max in {}", group_path.display())
-        })?;
+        fs::write(group_path.join("cpu.max"), cpu_max.as_bytes())
+            .with_context(|| format!("failed to write cpu.max in {}", group_path.display()))?;
     }
 
-    fs::write(group_path.join("cgroup.procs"), pid.to_string().as_bytes()).with_context(|| {
-        format!("failed to move pid {} to {}", pid, group_path.display())
-    })?;
+    fs::write(group_path.join("cgroup.procs"), pid.to_string().as_bytes())
+        .with_context(|| format!("failed to move pid {} to {}", pid, group_path.display()))?;
     Ok(())
 }
 

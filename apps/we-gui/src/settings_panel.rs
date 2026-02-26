@@ -150,11 +150,8 @@ pub fn build_settings_overlay<'a>(
 
     let card_content = scrollable(content);
 
-    let card = container(card_content)
-        .width(760)
-        .height(620)
-        .padding(16)
-        .style(settings_card_style);
+    let card =
+        container(card_content).width(760).height(620).padding(16).style(settings_card_style);
 
     container(card)
         .width(Fill)

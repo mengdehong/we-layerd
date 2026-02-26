@@ -8,8 +8,8 @@ use crate::{
     config::{Config, RuntimeMode},
     ipc::{self, ControlCommand},
     wayland,
-    wm_visibility::DebugWindowVisibility,
     wine::launcher::WineProcessHandle,
+    wm_visibility::DebugWindowVisibility,
     x11::{capture_xcomposite, window_finder},
 };
 use std::sync::mpsc;
@@ -36,22 +36,26 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         &capture_match,
     );
     let handler_visibility = debug_visibility.clone();
-    let _control_server = ipc::ControlServer::start(control_tx, move || {
-        let mut status = runtime_cfg_toml.clone();
-        status.push_str("\n\n");
-        status.push_str(&status_cgroup.render_status_toml());
-        status
-    }, move |cmd| match cmd {
-        ControlCommand::HideWindow => {
-            handler_visibility.hide()?;
-            Ok(true)
-        }
-        ControlCommand::ShowWindow => {
-            handler_visibility.show()?;
-            Ok(true)
-        }
-        _ => Ok(false),
-    })?;
+    let _control_server = ipc::ControlServer::start(
+        control_tx,
+        move || {
+            let mut status = runtime_cfg_toml.clone();
+            status.push_str("\n\n");
+            status.push_str(&status_cgroup.render_status_toml());
+            status
+        },
+        move |cmd| match cmd {
+            ControlCommand::HideWindow => {
+                handler_visibility.hide()?;
+                Ok(true)
+            }
+            ControlCommand::ShowWindow => {
+                handler_visibility.show()?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        },
+    )?;
 
     if let Some(runtime) = &cfg.runtime {
         if runtime.mode == RuntimeMode::VideoNative {

@@ -11,8 +11,8 @@ use iced::{
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
 use settings_panel::{
-    build_settings_overlay, detect_supported_resolutions, pick_initial_resolution, CgroupModeOption,
-    ResolutionOption, UiSettings,
+    build_settings_overlay, detect_supported_resolutions, pick_initial_resolution,
+    CgroupModeOption, ResolutionOption, UiSettings,
 };
 use we_core::{
     config::{build_config, save_config, CgroupMode, LaunchSettings},
@@ -614,11 +614,8 @@ fn sync_launch_settings(app: &mut App) {
 }
 
 async fn fetch_runtime_status() -> Result<String, String> {
-    let output = Command::new("we-layerd")
-        .arg("ctl")
-        .arg("status")
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output =
+        Command::new("we-layerd").arg("ctl").arg("status").output().map_err(|e| e.to_string())?;
 
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();

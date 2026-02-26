@@ -55,7 +55,10 @@ impl DebugWindowVisibility {
     }
 
     fn selector_class(&self) -> String {
-        self.class_hint.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "wallpaper64".to_string())
+        self.class_hint
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "wallpaper64".to_string())
     }
 
     fn selector_title(&self) -> Option<String> {
@@ -96,6 +99,7 @@ impl DebugWindowVisibility {
                     "niri",
                     &["msg", "action", "move-window-to-floating", "--id", &id.to_string()],
                 );
+                let _ = move_niri_window_to_corner(id);
             }
         }
         if moved {
@@ -208,10 +212,8 @@ impl DebugWindowVisibility {
 }
 
 fn run_cmd(bin: &str, args: &[&str]) -> Result<()> {
-    let output = Command::new(bin)
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to run {bin}"))?;
+    let output =
+        Command::new(bin).args(args).output().with_context(|| format!("failed to run {bin}"))?;
     if output.status.success() {
         return Ok(());
     }
@@ -344,19 +346,15 @@ fn move_niri_window_to_workspace_id(window_id: u64, workspace_id: u64, focus: bo
 fn niri_send_request(req: Value) -> Result<Value> {
     let socket_path =
         std::env::var("NIRI_SOCKET").context("NIRI_SOCKET is not set for niri IPC access")?;
-    let mut stream =
-        UnixStream::connect(&socket_path).with_context(|| format!("cannot connect {socket_path}"))?;
+    let mut stream = UnixStream::connect(&socket_path)
+        .with_context(|| format!("cannot connect {socket_path}"))?;
     let line = format!("{}\n", req);
-    stream
-        .write_all(line.as_bytes())
-        .context("failed to write niri IPC request")?;
+    stream.write_all(line.as_bytes()).context("failed to write niri IPC request")?;
     stream.flush().context("failed to flush niri IPC request")?;
 
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .context("failed to read niri IPC reply")?;
+    reader.read_line(&mut line).context("failed to read niri IPC reply")?;
     let line = line.trim();
     if line.is_empty() {
         return Err(anyhow!("empty niri IPC reply"));
@@ -369,6 +367,41 @@ fn niri_send_request(req: Value) -> Result<Value> {
         return Ok(reply);
     }
     Err(anyhow!("unexpected niri IPC reply: {reply}"))
+}
+
+fn move_niri_window_to_corner(window_id: u64) -> Result<()> {
+    let (x, y) = niri_hidden_corner_position().unwrap_or((0, 0));
+    run_cmd(
+        "niri",
+        &[
+            "msg",
+            "action",
+            "move-floating-window",
+            "--id",
+            &window_id.to_string(),
+            "-x",
+            &x.to_string(),
+            "-y",
+            &y.to_string(),
+        ],
+    )
+}
+
+fn niri_hidden_corner_position() -> Result<(i32, i32)> {
+    let output = Command::new("niri")
+        .args(["msg", "-j", "focused-output"])
+        .output()
+        .context("failed to query niri focused-output")?;
+    if !output.status.success() {
+        return Err(anyhow!("niri msg -j focused-output failed"));
+    }
+    let value: Value =
+        serde_json::from_slice(&output.stdout).context("invalid focused-output json")?;
+    let logical = value.get("logical").ok_or_else(|| anyhow!("focused-output lacks logical"))?;
+    let width =
+        logical.get("width").and_then(|v| v.as_f64()).map(|v| v.round() as i32).unwrap_or(1920);
+    let x = (width - 8).max(0);
+    Ok((x, 0))
 }
 
 fn move_hypr_windows(addresses: &[String], workspace: &str) -> Result<()> {

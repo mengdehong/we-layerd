@@ -72,7 +72,11 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-    pub fn start<F, H>(tx: Sender<ControlCommand>, status_provider: F, command_handler: H) -> Result<Self>
+    pub fn start<F, H>(
+        tx: Sender<ControlCommand>,
+        status_provider: F,
+        command_handler: H,
+    ) -> Result<Self>
     where
         F: Fn() -> String + Send + Sync + 'static,
         H: Fn(ControlCommand) -> Result<bool> + Send + Sync + 'static,
@@ -123,10 +127,7 @@ impl ControlServer {
             }
         });
 
-        Ok(Self {
-            socket_path,
-            _instance_lock: instance_lock,
-        })
+        Ok(Self { socket_path, _instance_lock: instance_lock })
     }
 }
 
@@ -211,7 +212,10 @@ fn control_endpoints() -> Vec<Endpoint> {
     {
         vec![
             Endpoint::Abstract(abstract_socket_name()),
-            Endpoint::Path(default_socket_path().unwrap_or_else(|_| PathBuf::from("/tmp/we-layerd-control.sock"))),
+            Endpoint::Path(
+                default_socket_path()
+                    .unwrap_or_else(|_| PathBuf::from("/tmp/we-layerd-control.sock")),
+            ),
         ]
     }
 
@@ -228,9 +232,10 @@ fn bind_listener(endpoint: &Endpoint) -> Result<UnixListener> {
         Endpoint::Path(socket_path) => bind_file_listener(socket_path),
         #[cfg(target_os = "linux")]
         Endpoint::Abstract(name) => {
-            let addr =
-                SocketAddr::from_abstract_name(name).context("failed to build abstract IPC socket")?;
-            UnixListener::bind_addr(&addr).context("failed to bind abstract IPC socket for we-layerd")
+            let addr = SocketAddr::from_abstract_name(name)
+                .context("failed to build abstract IPC socket")?;
+            UnixListener::bind_addr(&addr)
+                .context("failed to bind abstract IPC socket for we-layerd")
         }
     }
 }
@@ -258,8 +263,8 @@ fn connect_stream(endpoint: &Endpoint) -> Result<UnixStream> {
             .with_context(|| format!("failed to connect IPC socket {}", path.display())),
         #[cfg(target_os = "linux")]
         Endpoint::Abstract(name) => {
-            let addr =
-                SocketAddr::from_abstract_name(name).context("failed to build abstract IPC socket")?;
+            let addr = SocketAddr::from_abstract_name(name)
+                .context("failed to build abstract IPC socket")?;
             UnixStream::connect_addr(&addr).context("failed to connect abstract IPC socket")
         }
     }

@@ -1,13 +1,13 @@
 mod app;
-mod cli;
 mod cgroup;
+mod cli;
 mod config;
 mod ipc;
 mod logging;
 mod video;
 mod wayland;
-mod wm_visibility;
 mod wine;
+mod wm_visibility;
 mod x11;
 
 use anyhow::Result;
@@ -27,19 +27,17 @@ fn main() -> Result<()> {
             println!("{}", cfg.to_toml_pretty()?);
             Ok(())
         }
-        Command::Ctl { action } => {
-            match action {
-                ControlAction::Stop => ipc::send_command(ControlCommand::Stop),
-                ControlAction::Pause => ipc::send_command(ControlCommand::Pause),
-                ControlAction::Resume => ipc::send_command(ControlCommand::Resume),
-                ControlAction::Reload => ipc::send_command(ControlCommand::Reload),
-                ControlAction::HideWindow => ipc::send_command(ControlCommand::HideWindow),
-                ControlAction::ShowWindow => ipc::send_command(ControlCommand::ShowWindow),
-                ControlAction::Status => {
-                    println!("{}", ipc::request_running_config()?);
-                    Ok(())
-                }
+        Command::Ctl { action } => match action {
+            ControlAction::Stop => ipc::send_command(ControlCommand::Stop),
+            ControlAction::Pause => ipc::send_command(ControlCommand::Pause),
+            ControlAction::Resume => ipc::send_command(ControlCommand::Resume),
+            ControlAction::Reload => ipc::send_command(ControlCommand::Reload),
+            ControlAction::HideWindow => ipc::send_command(ControlCommand::HideWindow),
+            ControlAction::ShowWindow => ipc::send_command(ControlCommand::ShowWindow),
+            ControlAction::Status => {
+                println!("{}", ipc::request_running_config()?);
+                Ok(())
             }
-        }
+        },
     }
 }
