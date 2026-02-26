@@ -22,6 +22,7 @@ impl fmt::Display for ResolutionOption {
 #[derive(Debug, Clone)]
 pub struct UiSettings {
     pub wallpaper_exe: String,
+    pub executable_variant: ExecutableVariantOption,
     pub workshop_path: String,
     pub launcher_mode: LauncherModeOption,
     pub wine_command: String,
@@ -36,6 +37,27 @@ pub struct UiSettings {
     pub cgroup_memory_max: String,
     pub cgroup_cpu_max: String,
     pub status_text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutableVariantOption {
+    Wallpaper64,
+    Wallpaper32,
+}
+
+impl ExecutableVariantOption {
+    pub const fn filename(self) -> &'static str {
+        match self {
+            Self::Wallpaper64 => "wallpaper64.exe",
+            Self::Wallpaper32 => "wallpaper32.exe",
+        }
+    }
+}
+
+impl fmt::Display for ExecutableVariantOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.filename())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +140,13 @@ pub fn build_settings_overlay<'a>(
             .on_input(Message::ProtonPathChanged)
             .padding(10),
         text("Wallpaper Engine Path").size(14),
+        text("Executable Variant").size(14),
+        pick_list(
+            vec![ExecutableVariantOption::Wallpaper64, ExecutableVariantOption::Wallpaper32],
+            Some(ui_settings.executable_variant),
+            Message::ExecutableVariantSelected,
+        )
+        .padding(10),
         row![
             text_input("/path/to/wallpaper64.exe", &ui_settings.wallpaper_exe)
                 .on_input(Message::WallpaperExeChanged)

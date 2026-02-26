@@ -331,25 +331,9 @@ pub fn build_config(
 
     if settings.launcher == WindowsLauncher::Proton {
         if let Some(proton) = settings.proton_path.as_ref().filter(|s| !s.trim().is_empty()) {
-            let exe_path = Path::new(&settings.wallpaper_exe);
-            let launcher_exe = exe_path
-                .parent()
-                .map(|p| p.join("launcher.exe"))
-                .unwrap_or_else(|| Path::new("launcher.exe").to_path_buf());
-            let wallpaper_name = exe_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("wallpaper64.exe")
-                .to_string();
             cfg.wine.command = proton.clone();
             cfg.wine.command_mode = WineCommandMode::CommandOnly;
-            let mut proton_args = vec![
-                "run".to_string(),
-                launcher_exe.display().to_string(),
-                "-run".to_string(),
-                wallpaper_name,
-                "-nobrowse".to_string(),
-            ];
+            let mut proton_args = vec!["run".to_string(), settings.wallpaper_exe.clone()];
             proton_args.extend(cfg.wine.args.clone());
             cfg.wine.args = proton_args;
             if let Some(steam_root) = derive_steam_root_from_proton_path(proton) {

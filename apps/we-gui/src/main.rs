@@ -12,7 +12,8 @@ use iced::{
 };
 use settings_panel::{
     build_settings_overlay, detect_supported_resolutions, pick_initial_resolution,
-    CgroupModeOption, LauncherChoice, LauncherModeOption, ResolutionOption, UiSettings,
+    CgroupModeOption, ExecutableVariantOption, LauncherChoice, LauncherModeOption,
+    ResolutionOption, UiSettings,
 };
 use we_core::{
     config::{build_config, save_config, CgroupMode, LaunchSettings, WindowsLauncher},
@@ -61,6 +62,7 @@ enum Message {
     StopPressed,
     SettingsPressed,
     WallpaperExeChanged(String),
+    ExecutableVariantSelected(ExecutableVariantOption),
     WorkshopPathChanged(String),
     LauncherModeSelected(LauncherModeOption),
     WineCommandSelected(LauncherChoice),
@@ -154,6 +156,16 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::WallpaperExeChanged(value) => {
             app.ui_settings.wallpaper_exe = value;
+            app.ui_settings.executable_variant =
+                infer_executable_variant(&app.ui_settings.wallpaper_exe);
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::ExecutableVariantSelected(value) => {
+            app.ui_settings.executable_variant = value;
+            if let Some(parent) = Path::new(&app.ui_settings.wallpaper_exe).parent() {
+                app.ui_settings.wallpaper_exe = parent.join(value.filename()).display().to_string();
+            }
             sync_launch_settings(app);
             Task::none()
         }
@@ -200,6 +212,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::WallpaperExePicked(path) => {
             if let Some(path) = path {
                 app.ui_settings.wallpaper_exe = path.display().to_string();
+                app.ui_settings.executable_variant =
+                    infer_executable_variant(&app.ui_settings.wallpaper_exe);
                 sync_launch_settings(app);
             }
             Task::none()
@@ -490,6 +504,7 @@ impl App {
         );
         let ui_settings = UiSettings {
             wallpaper_exe: launch_settings.wallpaper_exe.clone(),
+            executable_variant: infer_executable_variant(&launch_settings.wallpaper_exe),
             workshop_path,
             launcher_mode: match launch_settings.launcher {
                 WindowsLauncher::Wine => LauncherModeOption::Wine,
@@ -694,6 +709,19 @@ fn non_empty_trimmed(input: &str) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+fn infer_executable_variant(path: &str) -> ExecutableVariantOption {
+    let lower = Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if lower == "wallpaper32.exe" {
+        ExecutableVariantOption::Wallpaper32
+    } else {
+        ExecutableVariantOption::Wallpaper64
     }
 }
 
