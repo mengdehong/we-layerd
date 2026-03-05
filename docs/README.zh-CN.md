@@ -23,9 +23,7 @@
 
 Arch Linux 依赖示例：
 ```bash
-sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr
-```
-
+sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr xdotool
 ## 构建
 构建发布版二进制：
 ```bash
