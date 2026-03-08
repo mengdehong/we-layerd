@@ -27,7 +27,7 @@ pub struct XCompositeCapturer {
     conn: RustConnection,
     window: Window,
     shm: Option<ShmSegment>,
-    cached_geometry: Option<CachedGeometry>,
+    latest_geometry: Option<CachedGeometry>,
     shm_enabled: bool,
     shm_warned: bool,
 }
@@ -68,7 +68,7 @@ impl XCompositeCapturer {
 
         let shm_enabled = conn.shm_query_version().ok().and_then(|c| c.reply().ok()).is_some();
 
-        Ok(Self { conn, window, shm: None, cached_geometry: None, shm_enabled, shm_warned: false })
+        Ok(Self { conn, window, shm: None, latest_geometry: None, shm_enabled, shm_warned: false })
     }
 
     pub fn capture_frame(&mut self) -> Result<CapturedFrame> {
@@ -169,10 +169,6 @@ impl XCompositeCapturer {
     }
 
     fn query_pixmap_geometry(&mut self, pixmap: Pixmap) -> Result<CachedGeometry> {
-        if let Some(geometry) = self.cached_geometry {
-            return Ok(geometry);
-        }
-
         let geometry = self
             .conn
             .get_geometry(pixmap)
@@ -180,24 +176,28 @@ impl XCompositeCapturer {
             .reply()
             .context("get_geometry reply failed")?;
 
-        let cached = CachedGeometry {
+        let current = CachedGeometry {
             width: u16::max(geometry.width, 1),
             height: u16::max(geometry.height, 1),
             depth: geometry.depth,
         };
-        self.cached_geometry = Some(cached);
-        Ok(cached)
+        self.latest_geometry = Some(current);
+        Ok(current)
     }
 
     fn update_cached_geometry_from_events(&mut self) {
         loop {
             match self.conn.poll_for_event() {
                 Ok(Some(Event::ConfigureNotify(event))) if event.window == self.window => {
-                    if let Some(geometry) = self.cached_geometry.as_mut() {
+                    if let Some(geometry) = self.latest_geometry.as_mut() {
                         geometry.width = u16::max(event.width, 1);
                         geometry.height = u16::max(event.height, 1);
                     } else {
-                        self.cached_geometry = None;
+                        self.latest_geometry = Some(CachedGeometry {
+                            width: u16::max(event.width, 1),
+                            height: u16::max(event.height, 1),
+                            depth: 32,
+                        });
                     }
                 }
                 Ok(Some(_)) => {}
