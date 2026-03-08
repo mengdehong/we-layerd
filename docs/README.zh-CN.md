@@ -110,6 +110,7 @@ we-layerd print-config --config ~/.config/we-layerd/config.toml
 ## 故障排查
 - `WAYLAND_DISPLAY` 缺失：当前 shell 不在 Wayland 会话环境内。
 - `DISPLAY` 缺失：进程看不到 XWayland/X11 桥接。
+- `Invalid MIT-MAGIC-COOKIE-1 key`：X11 鉴权失败。请从当前图形登录会话里直接启动 `we-layerd`，或在启动前通过 `XAUTHORITY` 指向当前会话使用的 X11 cookie 文件。
 - `Wallpaper Engine is not installed. Please install it, or choose paths in Settings.`：
   未发现 `wallpaper_engine` 目录。请先安装，或在设置中手动指定路径。
 - `Wallpaper Engine first-run setup is pending. Launch it once in Steam to run installer.exe.`：

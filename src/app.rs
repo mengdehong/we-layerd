@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{env, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use tracing::{info, warn};
@@ -64,6 +64,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     }
 
     info!(?cfg, ?capture_match, "starting we-layerd run mode");
+    ensure_runtime_access()?;
     let wine = WineProcessHandle::spawn(&cfg.wine)?;
     wine.install_ctrlc_handler()?;
     let cgroup_on_spawn = runtime_cgroup.clone();
@@ -139,16 +140,16 @@ fn run_video_native(
 }
 
 pub fn doctor() -> Result<()> {
-    for key in ["WAYLAND_DISPLAY", "DISPLAY"] {
+    for key in ["WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY"] {
         match std::env::var(key) {
             Ok(value) => info!(%key, %value, "environment variable set"),
             Err(_) => warn!(%key, "environment variable not set"),
         }
     }
 
-    match capture_xcomposite::probe_xcomposite_support() {
-        Ok(()) => info!("XComposite extension probe: OK"),
-        Err(err) => warn!(error = %err, "XComposite extension probe failed"),
+    match ensure_runtime_access() {
+        Ok(()) => info!("X11 runtime access probe: OK"),
+        Err(err) => warn!(error = %err, "X11 runtime access probe failed"),
     }
 
     match wayland::layer_shell::probe_layer_shell_support() {
@@ -163,4 +164,26 @@ pub fn doctor() -> Result<()> {
 fn extract_play_in_window_hint(args: &[String]) -> Option<String> {
     let idx = args.iter().position(|arg| arg == "-playInWindow")?;
     args.get(idx + 1).cloned().filter(|s| !s.trim().is_empty())
+}
+
+fn ensure_runtime_access() -> Result<()> {
+    capture_xcomposite::probe_xcomposite_support().map_err(|err| {
+        let display = env::var("DISPLAY").ok();
+        let xauthority = env::var("XAUTHORITY").ok();
+        let hint = if err
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("invalid mit-magic-cookie-1 key")
+        {
+            "X11 authentication failed. Start we-layerd from the same graphical user session as XWayland, or export the matching X11 cookie file via XAUTHORITY before launching."
+        } else {
+            "X11 setup failed. Check DISPLAY, XAUTHORITY, and whether this process can access the active XWayland/X11 session."
+        };
+
+        err.context(format!(
+            "{hint} DISPLAY={} XAUTHORITY={}",
+            display.as_deref().unwrap_or("<unset>"),
+            xauthority.as_deref().unwrap_or("<unset>")
+        ))
+    })
 }

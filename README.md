@@ -26,7 +26,7 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 
 Example packages (Arch Linux):
 ```bash
-sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr xdotool
+sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr
 ```
 
 ## Build
@@ -121,6 +121,7 @@ we-layerd print-config --config ~/.config/we-layerd/config.toml
 ## Troubleshooting
 - `WAYLAND_DISPLAY` missing: you are not in a Wayland session shell.
 - `DISPLAY` missing: XWayland/X11 bridge is not visible to the process.
+- `Invalid MIT-MAGIC-COOKIE-1 key`：X11 鉴权失败。请从当前图形登录会话里直接启动 `we-layerd`，或在启动前通过 `XAUTHORITY` 指向当前会话使用的 X11 cookie 文件。
 - `Wallpaper Engine is not installed. Please install it, or choose paths in Settings.`: Steam common path does not contain `wallpaper_engine`. Install Wallpaper Engine first, or set paths manually in Settings.
 - `Wallpaper Engine first-run setup is pending. Launch it once in Steam to run installer.exe.`: `installer.exe` exists but `wallpaper64.exe` is missing. Run Wallpaper Engine once in Steam to complete first-run setup.
 - Cannot find window: relax `capture.wm_class_contains` / `capture.title_contains`, or pin `capture.net_wm_pid`.
