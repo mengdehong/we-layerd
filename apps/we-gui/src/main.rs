@@ -74,6 +74,7 @@ enum Message {
     WorkshopPathPicked(Option<PathBuf>),
     FpsLimitChanged(String),
     ShowFpsToggled(bool),
+    BorderlessToggled(bool),
     HideDebugWindowToggled(bool),
     HiddenWorkspaceNameChanged(String),
     ResolutionSelected(settings_panel::ResolutionOption),
@@ -124,11 +125,15 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::PlayPressed => {
-            stop_runtime(app);
-
             if !app.layerd_available {
                 return Task::none();
             }
+
+            if can_hot_switch(app.selected_type) && try_switch_runtime(&app.config_path) {
+                return Task::none();
+            }
+
+            stop_runtime(app);
 
             let spawn =
                 Command::new("we-layerd").arg("run").arg("--config").arg(&app.config_path).spawn();
@@ -240,6 +245,11 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ShowFpsToggled(value) => {
             app.ui_settings.show_fps = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::BorderlessToggled(value) => {
+            app.ui_settings.borderless = value;
             sync_launch_settings(app);
             Task::none()
         }
@@ -518,6 +528,7 @@ impl App {
             proton_path: launch_settings.proton_path.clone().unwrap_or_default(),
             fps_limit: launch_settings.fps_limit.to_string(),
             show_fps: launch_settings.show_fps,
+            borderless: launch_settings.borderless,
             hide_debug_window: launch_settings.hide_debug_window,
             hidden_workspace_name: launch_settings.hidden_workspace_name.clone(),
             selected_resolution,
@@ -668,6 +679,7 @@ fn sync_launch_settings(app: &mut App) {
     app.launch_settings.wine_command = app.ui_settings.wine_command.clone();
     app.launch_settings.proton_path = non_empty_trimmed(&app.ui_settings.proton_path);
     app.launch_settings.show_fps = app.ui_settings.show_fps;
+    app.launch_settings.borderless = app.ui_settings.borderless;
     app.launch_settings.play_in_window_title = "WE-DEBUG-WINDOW".to_string();
     app.launch_settings.wm_class_contains =
         infer_wm_class(app.ui_settings.launcher_mode, app.ui_settings.executable_variant)
@@ -824,6 +836,22 @@ fn command_exists_in_path(name: &str) -> bool {
     }
 
     false
+}
+
+fn can_hot_switch(selected_type: Option<WallpaperType>) -> bool {
+    matches!(selected_type, Some(WallpaperType::Scene | WallpaperType::Web))
+}
+
+fn try_switch_runtime(config_path: &Path) -> bool {
+    Command::new("we-layerd")
+        .arg("switch")
+        .arg("--config")
+        .arg(config_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn stop_runtime(app: &mut App) -> bool {

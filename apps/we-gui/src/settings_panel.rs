@@ -29,6 +29,7 @@ pub struct UiSettings {
     pub proton_path: String,
     pub fps_limit: String,
     pub show_fps: bool,
+    pub borderless: bool,
     pub hide_debug_window: bool,
     pub hidden_workspace_name: String,
     pub selected_resolution: Option<ResolutionOption>,
@@ -173,6 +174,9 @@ pub fn build_settings_overlay<'a>(
         checkbox(ui_settings.show_fps)
             .label("Show realtime FPS")
             .on_toggle(Message::ShowFpsToggled),
+        checkbox(ui_settings.borderless)
+            .label("Open scene/web wallpaper window as borderless")
+            .on_toggle(Message::BorderlessToggled),
         checkbox(ui_settings.hide_debug_window)
             .label("Hide WE debug window automatically")
             .on_toggle(Message::HideDebugWindowToggled),

@@ -1,14 +1,18 @@
-use std::{env, path::Path, sync::Arc};
+use std::{
+    env,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::{anyhow, Result};
 use tracing::{info, warn};
 
 use crate::{
     cgroup::RuntimeCgroup,
-    config::{Config, RuntimeMode},
+    config::{Config, RuntimeMode, RuntimeWallpaperType},
     ipc::{self, ControlCommand},
     wayland,
-    wine::launcher::WineProcessHandle,
+    wine::launcher::{spawn_transient_command, WineProcessHandle},
     wm_visibility::DebugWindowVisibility,
     x11::{capture_xcomposite, window_finder},
 };
@@ -16,18 +20,12 @@ use std::sync::mpsc;
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
-    let mut runtime_cfg = cfg.clone();
-    let mut capture_match = cfg.capture.clone();
-    if capture_match.title_contains.is_none() {
-        if let Some(title_hint) = extract_play_in_window_hint(&cfg.wine.args) {
-            info!(title = %title_hint, "auto-derived capture.title_contains from wine args");
-            capture_match.title_contains = Some(title_hint);
-        }
-    }
-    runtime_cfg.capture = capture_match.clone();
+    let runtime_cfg = effective_runtime_config(&cfg);
+    let capture_match = runtime_cfg.capture.clone();
 
     let runtime_cgroup = RuntimeCgroup::new(cfg.cgroup.clone());
-    let runtime_cfg_toml = runtime_cfg.to_toml_pretty()?;
+    let runtime_cfg_toml = Arc::new(Mutex::new(runtime_cfg.to_toml_pretty()?));
+    let current_cfg = Arc::new(Mutex::new(cfg.clone()));
     let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
     let status_cgroup = runtime_cgroup.clone();
     let debug_visibility = DebugWindowVisibility::new(
@@ -38,11 +36,17 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let handler_visibility = debug_visibility.clone();
     let _control_server = ipc::ControlServer::start(
         control_tx,
-        move || {
-            let mut status = runtime_cfg_toml.clone();
-            status.push_str("\n\n");
-            status.push_str(&status_cgroup.render_status_toml());
-            status
+        {
+            let runtime_cfg_toml = runtime_cfg_toml.clone();
+            move || {
+                let mut status = runtime_cfg_toml
+                    .lock()
+                    .map(|guard| guard.clone())
+                    .unwrap_or_else(|_| "<status unavailable>".to_string());
+                status.push_str("\n\n");
+                status.push_str(&status_cgroup.render_status_toml());
+                status
+            }
         },
         move |cmd| match cmd {
             ControlCommand::HideWindow => {
@@ -54,6 +58,27 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                 Ok(true)
             }
             _ => Ok(false),
+        },
+        {
+            let runtime_cfg_toml = runtime_cfg_toml.clone();
+            let current_cfg = current_cfg.clone();
+            move |config_path| {
+                let next_cfg = Config::load(Some(config_path))?;
+                let current_cfg_value = current_cfg
+                    .lock()
+                    .map(|guard| guard.clone())
+                    .map_err(|_| anyhow!("failed to read current runtime config"))?;
+                ensure_switchable_runtime(&current_cfg_value)?;
+                switch_wallpaper(&next_cfg)?;
+                let next_runtime_cfg = effective_runtime_config(&next_cfg);
+                if let Ok(mut guard) = runtime_cfg_toml.lock() {
+                    *guard = next_runtime_cfg.to_toml_pretty()?;
+                }
+                if let Ok(mut guard) = current_cfg.lock() {
+                    *guard = next_cfg;
+                }
+                Ok(())
+            }
         },
     )?;
 
@@ -117,6 +142,40 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         },
         Some(&control_rx),
     )
+}
+
+fn effective_runtime_config(cfg: &Config) -> Config {
+    let mut runtime_cfg = cfg.clone();
+    let mut capture_match = cfg.capture.clone();
+    if capture_match.title_contains.is_none() {
+        if let Some(title_hint) = extract_play_in_window_hint(&cfg.wine.args) {
+            info!(title = %title_hint, "auto-derived capture.title_contains from wine args");
+            capture_match.title_contains = Some(title_hint);
+        }
+    }
+    runtime_cfg.capture = capture_match;
+    runtime_cfg
+}
+
+fn switch_wallpaper(cfg: &Config) -> Result<()> {
+    ensure_switchable_runtime(cfg)?;
+    let pid = spawn_transient_command(&cfg.wine)?;
+    info!(pid, "sent openWallpaper command to running Wine wallpaper process");
+    Ok(())
+}
+
+fn ensure_switchable_runtime(cfg: &Config) -> Result<()> {
+    let runtime = cfg
+        .runtime
+        .as_ref()
+        .ok_or_else(|| anyhow!("runtime block is required for wallpaper switching"))?;
+    if runtime.mode != RuntimeMode::WineLayerd {
+        return Err(anyhow!("only scene/web wallpapers can be switched without restarting Wine"));
+    }
+    if !matches!(runtime.wallpaper_type, RuntimeWallpaperType::Scene | RuntimeWallpaperType::Web) {
+        return Err(anyhow!("only scene/web wallpapers can be switched without restarting Wine"));
+    }
+    Ok(())
 }
 
 fn run_video_native(

@@ -21,6 +21,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run { config } => app::run(config.as_deref()),
+        Command::Switch { config } => ipc::send_switch_config(&config),
         Command::Doctor => app::doctor(),
         Command::PrintConfig { config } => {
             let cfg = config::Config::load(config.as_deref())?;

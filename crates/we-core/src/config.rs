@@ -131,6 +131,7 @@ pub struct LaunchSettings {
     pub x: i32,
     pub y: i32,
     pub play_in_window_title: String,
+    pub borderless: bool,
     pub wm_class_contains: String,
     pub cgroup_enabled: bool,
     pub cgroup_mode: CgroupMode,
@@ -154,6 +155,7 @@ impl Default for LaunchSettings {
             x: 0,
             y: 0,
             play_in_window_title: "WE-DEBUG-WINDOW".to_string(),
+            borderless: true,
             wm_class_contains: "wallpaper64".to_string(),
             cgroup_enabled: false,
             cgroup_mode: CgroupMode::Detect,
@@ -280,6 +282,9 @@ pub fn build_config(
                 "-y".to_string(),
                 settings.y.to_string(),
             ];
+            if settings.borderless {
+                cfg.wine.args.push("-borderless".to_string());
+            }
         }
         WallpaperType::Web => {
             cfg.runtime = Some(RuntimeConfig {
@@ -303,6 +308,9 @@ pub fn build_config(
                 "-y".to_string(),
                 settings.y.to_string(),
             ];
+            if settings.borderless {
+                cfg.wine.args.push("-borderless".to_string());
+            }
         }
         WallpaperType::Unknown => {
             cfg.runtime = Some(RuntimeConfig {
@@ -326,6 +334,9 @@ pub fn build_config(
                 "-y".to_string(),
                 settings.y.to_string(),
             ];
+            if settings.borderless {
+                cfg.wine.args.push("-borderless".to_string());
+            }
         }
     }
 

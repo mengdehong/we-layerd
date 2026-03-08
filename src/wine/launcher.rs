@@ -165,6 +165,15 @@ impl WineProcessHandle {
     }
 }
 
+pub fn spawn_transient_command(config: &WineConfig) -> Result<u32> {
+    let mut child = spawn_child(config)?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(pid)
+}
+
 impl Drop for WineProcessHandle {
     fn drop(&mut self) {
         if !self.owner {

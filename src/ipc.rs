@@ -4,8 +4,7 @@ use std::{
     net::Shutdown,
     os::fd::AsRawFd,
     os::unix::net::{SocketAddr, UnixListener, UnixStream},
-    path::Path,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::mpsc::Sender,
     thread,
 };
@@ -54,11 +53,20 @@ impl ControlCommand {
 enum ControlRequest {
     Command(ControlCommand),
     Status,
+    SwitchConfig(PathBuf),
 }
 
 impl ControlRequest {
     fn parse(raw: &str) -> Option<Self> {
-        let normalized = raw.trim().to_ascii_lowercase();
+        let trimmed = raw.trim();
+        if let Some(rest) = trimmed.strip_prefix("switch-config ") {
+            let path = rest.trim();
+            if path.is_empty() {
+                return None;
+            }
+            return Some(Self::SwitchConfig(PathBuf::from(path)));
+        }
+        let normalized = trimmed.to_ascii_lowercase();
         if normalized == "status" || normalized == "show-config" {
             return Some(Self::Status);
         }
@@ -72,14 +80,16 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-    pub fn start<F, H>(
+    pub fn start<F, H, S>(
         tx: Sender<ControlCommand>,
         status_provider: F,
         command_handler: H,
+        switch_config_handler: S,
     ) -> Result<Self>
     where
         F: Fn() -> String + Send + Sync + 'static,
         H: Fn(ControlCommand) -> Result<bool> + Send + Sync + 'static,
+        S: Fn(&Path) -> Result<()> + Send + Sync + 'static,
     {
         let instance_lock = acquire_instance_lock()?;
         let endpoint = default_endpoint()?;
@@ -87,6 +97,7 @@ impl ControlServer {
         let socket_path = endpoint.socket_path();
         let status_provider = std::sync::Arc::new(status_provider);
         let command_handler = std::sync::Arc::new(command_handler);
+        let switch_config_handler = std::sync::Arc::new(switch_config_handler);
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else {
@@ -105,6 +116,14 @@ impl ControlServer {
                         let status = status_provider();
                         let _ = stream.write_all(status.as_bytes());
                     }
+                    ControlRequest::SwitchConfig(path) => match switch_config_handler(&path) {
+                        Ok(()) => {
+                            let _ = stream.write_all(b"OK\n");
+                        }
+                        Err(err) => {
+                            let _ = stream.write_all(format!("ERR {err}\n").as_bytes());
+                        }
+                    },
                     ControlRequest::Command(cmd) => {
                         match command_handler(cmd) {
                             Ok(true) => {
@@ -153,6 +172,14 @@ pub fn request_running_config() -> Result<String> {
         return Err(anyhow!(response.trim().to_string()));
     }
     Ok(response)
+}
+
+pub fn send_switch_config(config_path: &Path) -> Result<()> {
+    let response = send_request(&format!("switch-config {}", config_path.display()))?;
+    if response.trim_start().starts_with("ERR") {
+        return Err(anyhow!(response.trim().to_string()));
+    }
+    Ok(())
 }
 
 fn send_request(request: &str) -> Result<String> {

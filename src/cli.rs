@@ -17,6 +17,12 @@ pub enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Switch scene/web wallpaper on a running daemon without restarting Wine
+    Switch {
+        /// Path to TOML config file
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Print environment diagnostics
     Doctor,
     /// Print the effective config as TOML
