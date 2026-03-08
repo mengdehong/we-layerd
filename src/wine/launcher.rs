@@ -255,10 +255,15 @@ fn signal_process_group(pgid: i32, signal: i32) -> Result<bool> {
     Err(err).with_context(|| format!("failed to send signal {} to process group {}", signal, pgid))
 }
 
-fn suppress_bootstrap_windows(_root_pid: i32) {
+fn suppress_bootstrap_windows(root_pid: i32) {
     std::thread::spawn(move || {
         let names = ["explorer.exe", "ui32.exe"];
-        for _ in 0..40 {
+        // Let Wine/X11 finish creating the real wallpaper window before pruning helpers.
+        std::thread::sleep(Duration::from_secs(2));
+        for _ in 0..12 {
+            if !is_process_alive(root_pid) {
+                break;
+            }
             let _ = kill_named_processes_for_current_user(&names);
             std::thread::sleep(Duration::from_millis(500));
         }
@@ -307,4 +312,13 @@ fn is_process_owned_by_uid(pid: i32, uid: u32) -> bool {
         }
     }
     false
+}
+
+fn is_process_alive(pid: i32) -> bool {
+    let rc = unsafe { libc::kill(pid, 0) };
+    if rc == 0 {
+        return true;
+    }
+    let err = io::Error::last_os_error();
+    err.raw_os_error() == Some(libc::EPERM)
 }
