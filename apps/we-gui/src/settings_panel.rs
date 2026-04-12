@@ -272,11 +272,7 @@ pub fn pick_initial_resolution(
     width: u32,
     height: u32,
 ) -> Option<ResolutionOption> {
-    if let Some(found) = supported.iter().find(|r| r.width == width && r.height == height).cloned()
-    {
-        return Some(found);
-    }
-    supported.last().cloned()
+    supported.iter().find(|r| r.width == width && r.height == height).cloned()
 }
 
 fn parse_xrandr_resolutions() -> Vec<ResolutionOption> {
