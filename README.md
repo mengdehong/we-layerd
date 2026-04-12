@@ -74,6 +74,26 @@ hidden_workspace_name = "top"
 - niri: target workspace spec; use `top` to move to the top/first workspace.
 For niri, hide flow is `move-window-to-workspace` first, then `move-window-to-floating`.
 
+niri startup sizing (important):
+- Wallpaper Engine debug window may open as half-screen by default under niri tiling.
+- Do not resize this window after launch via IPC actions; it can lead to black output.
+- Define a niri `window-rule` that matches `WE-DEBUG-WINDOW` at open time.
+- In this project, use `match app-id="WE-DEBUG-WINDOW"` directly.
+
+Example niri config:
+```kdl
+window-rule {
+    match app-id="WE-DEBUG-WINDOW"
+    open-floating false
+    open-maximized-to-edges true
+    open-focused false
+}
+```
+Check with:
+```bash
+niri msg -j windows
+```
+
 Wine/Proton launch behavior:
 ```toml
 [wine]
@@ -125,6 +145,7 @@ we-layerd print-config --config ~/.config/we-layerd/config.toml
 - `Wallpaper Engine is not installed. Please install it, or choose paths in Settings.`: Steam common path does not contain `wallpaper_engine`. Install Wallpaper Engine first, or set paths manually in Settings.
 - `Wallpaper Engine first-run setup is pending. Launch it once in Steam to run installer.exe.`: `installer.exe` exists but `wallpaper64.exe` is missing. Run Wallpaper Engine once in Steam to complete first-run setup.
 - Cannot find window: relax `capture.wm_class_contains` / `capture.title_contains`, or pin `capture.net_wm_pid`.
+- niri shows half-screen / odd scaling at startup: add a niri `window-rule` with `match app-id="WE-DEBUG-WINDOW"` and `open-maximized-to-edges true`.
 - Capture errors: ensure XComposite is available and the window still exists.
 - No layer surface: compositor may not expose `zwlr_layer_shell_v1`.
 - Wine path error: verify `wine.wallpaper_exe` points to an existing `.exe`.

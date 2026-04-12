@@ -414,3 +414,59 @@ pub fn save_config(path: &Path, config: &AppConfig) -> Result<()> {
     let toml = toml::to_string_pretty(config).context("failed to serialize config")?;
     fs::write(path, toml).with_context(|| format!("failed to write {}", path.display()))
 }
+
+pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let cfg: AppConfig =
+        toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
+    let mut settings = LaunchSettings::default();
+
+    settings.fps_limit = cfg.general.fps_limit;
+    settings.show_fps = cfg.general.show_fps;
+    settings.hide_debug_window = cfg.general.hide_debug_window;
+    settings.hidden_workspace_name = cfg.general.hidden_workspace_name;
+
+    settings.wm_class_contains = cfg.capture.wm_class_contains;
+    settings.play_in_window_title = cfg.capture.title_contains;
+
+    settings.cgroup_enabled = cfg.cgroup.enabled;
+    settings.cgroup_mode = cfg.cgroup.mode;
+    settings.cgroup_memory_max = cfg.cgroup.memory_max;
+    settings.cgroup_cpu_max = cfg.cgroup.cpu_max;
+
+    settings.wallpaper_exe = cfg.wine.wallpaper_exe;
+    match cfg.wine.command_mode {
+        WineCommandMode::ExeWithArgs => {
+            settings.launcher = WindowsLauncher::Wine;
+            settings.wine_command = cfg.wine.command;
+            settings.proton_path = None;
+        }
+        WineCommandMode::CommandOnly => {
+            settings.launcher = WindowsLauncher::Proton;
+            settings.proton_path = Some(cfg.wine.command);
+        }
+    }
+
+    if let Some(width) = arg_value(&cfg.wine.args, "-width").and_then(|v| v.parse::<u32>().ok()) {
+        settings.width = width.max(1);
+    }
+    if let Some(height) = arg_value(&cfg.wine.args, "-height").and_then(|v| v.parse::<u32>().ok())
+    {
+        settings.height = height.max(1);
+    }
+    if let Some(x) = arg_value(&cfg.wine.args, "-x").and_then(|v| v.parse::<i32>().ok()) {
+        settings.x = x;
+    }
+    if let Some(y) = arg_value(&cfg.wine.args, "-y").and_then(|v| v.parse::<i32>().ok()) {
+        settings.y = y;
+    }
+    settings.borderless = cfg.wine.args.iter().any(|v| v == "-borderless");
+
+    Ok(settings)
+}
+
+fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
+    let idx = args.iter().position(|arg| arg == key)?;
+    args.get(idx + 1).map(String::as_str)
+}

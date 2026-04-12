@@ -16,7 +16,7 @@ use settings_panel::{
     ResolutionOption, UiSettings,
 };
 use we_core::{
-    config::{build_config, save_config, CgroupMode, LaunchSettings, WindowsLauncher},
+    config::{build_config, load_launch_settings, save_config, CgroupMode, LaunchSettings, WindowsLauncher},
     steam::{self, WallpaperEngineInstallState},
     wallpaper::{self, WallpaperEntry, WallpaperType},
 };
@@ -478,7 +478,8 @@ impl App {
     fn init() -> (Self, Task<Message>) {
         let config_path =
             steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
-        let mut launch_settings = LaunchSettings::default();
+        let mut launch_settings =
+            load_launch_settings(&config_path).unwrap_or_else(|_| LaunchSettings::default());
         let install_state = steam::detect_wallpaper_engine_install_state();
         let install_notice = match &install_state {
             WallpaperEngineInstallState::NotInstalled => Some(
@@ -490,7 +491,9 @@ impl App {
                     .to_string(),
             ),
             WallpaperEngineInstallState::Installed { exe_path, .. } => {
-                launch_settings.wallpaper_exe = exe_path.display().to_string();
+                if launch_settings.wallpaper_exe.trim().is_empty() {
+                    launch_settings.wallpaper_exe = exe_path.display().to_string();
+                }
                 None
             }
         };

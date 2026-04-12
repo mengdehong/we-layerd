@@ -68,6 +68,25 @@ hidden_workspace_name = "top"
 - niri：作为目标工作区标识；`top` 表示最上/第一个工作区。
 在 niri 下隐藏顺序是先 `move-window-to-workspace`，再 `move-window-to-floating`。
 
+niri 启动尺寸（重要）：
+- niri 的默认平铺行为可能让 Wallpaper Engine 调试窗口初始为半屏。
+- 不要在窗口打开后通过 IPC 动作二次改尺寸，这可能导致黑屏。
+- 请在 niri 配置中使用 `window-rule`，并且只用 `match app-id="WE-DEBUG-WINDOW"`。
+
+niri 配置示例：
+```kdl
+window-rule {
+    match app-id="WE-DEBUG-WINDOW"
+    open-floating false
+    open-maximized-to-edges true
+    open-focused false
+}
+```
+可通过以下命令确认匹配字段：
+```bash
+niri msg -j windows
+```
+
 Wine / Proton 启动配置：
 ```toml
 [wine]
@@ -116,5 +135,6 @@ we-layerd print-config --config ~/.config/we-layerd/config.toml
 - `Wallpaper Engine first-run setup is pending. Launch it once in Steam to run installer.exe.`：
   存在 `installer.exe` 但缺少 `wallpaper64.exe`。请先在 Steam 里运行一次 Wallpaper Engine 完成首次安装。
 - 找不到窗口：调整 `capture.wm_class_contains` / `capture.title_contains`，或指定 `capture.net_wm_pid`。
+- niri 启动半屏/缩放异常：添加 `window-rule`，使用 `match app-id="WE-DEBUG-WINDOW"` 并设置 `open-maximized-to-edges true`。
 - `ctl` 无法连接：确认 daemon 正在运行，且用户/会话环境匹配（`WAYLAND_DISPLAY`、`XDG_RUNTIME_DIR`）。
 - cgroup 无数据或限制无效：确认系统为 cgroup v2 并且当前用户有 delegation 权限，可在 `ctl status` 的 `status.cgroup.last_error` 查看原因。
