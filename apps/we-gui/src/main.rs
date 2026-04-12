@@ -157,6 +157,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             if app.show_settings {
                 return Task::perform(fetch_runtime_status(), Message::StatusLoaded);
             }
+            persist_current_config(app);
             Task::none()
         }
         Message::WallpaperExeChanged(value) => {
@@ -703,6 +704,23 @@ fn sync_launch_settings(app: &mut App) {
     app.launch_settings.cgroup_cpu_max = non_empty_trimmed(&app.ui_settings.cgroup_cpu_max);
     app.launch_settings.hide_debug_window = app.ui_settings.hide_debug_window;
     app.launch_settings.hidden_workspace_name = app.ui_settings.hidden_workspace_name.clone();
+}
+
+fn persist_current_config(app: &App) {
+    let Some(selected_id) = app.selected_id.as_deref() else {
+        return;
+    };
+    let Some(entry) = app.entries.iter().find(|entry| entry.id == selected_id) else {
+        return;
+    };
+
+    let cfg = build_config(
+        &app.launch_settings,
+        entry.ty,
+        &entry.project_json,
+        entry.source_file.as_deref(),
+    );
+    let _ = save_config(&app.config_path, &cfg);
 }
 
 async fn fetch_runtime_status() -> Result<String, String> {
