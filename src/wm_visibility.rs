@@ -15,6 +15,7 @@ enum DesktopWm {
     Hyprland,
     Sway,
     Niri,
+    Kde,
     Unknown,
 }
 
@@ -41,6 +42,7 @@ impl DebugWindowVisibility {
             DesktopWm::Hyprland => self.hide_hyprland(),
             DesktopWm::Sway => self.hide_sway(),
             DesktopWm::Niri => self.hide_niri(),
+            DesktopWm::Kde => self.hide_kde(),
             DesktopWm::Unknown => Err(anyhow!("no supported WM detected for hide-window action")),
         }
     }
@@ -50,6 +52,7 @@ impl DebugWindowVisibility {
             DesktopWm::Hyprland => self.show_hyprland(),
             DesktopWm::Sway => self.show_sway(),
             DesktopWm::Niri => self.show_niri(),
+            DesktopWm::Kde => self.show_kde(),
             DesktopWm::Unknown => Err(anyhow!("no supported WM detected for show-window action")),
         }
     }
@@ -86,6 +89,36 @@ impl DebugWindowVisibility {
         let class = self.selector_class();
         run_cmd("swaymsg", &[&format!(r#"[class="{class}"]"#), "scratchpad", "show"])
             .context("sway show failed")
+    }
+
+    fn hide_kde(&self) -> Result<()> {
+        let ids = self.matching_kde_window_ids()?;
+        let mut changed = false;
+        for id in ids {
+            if run_kdotool(&["windowminimize", id.as_str()]).is_ok() {
+                changed = true;
+            }
+        }
+        if changed {
+            Ok(())
+        } else {
+            Err(anyhow!("kde hide did not minimize any matching window"))
+        }
+    }
+
+    fn show_kde(&self) -> Result<()> {
+        let ids = self.matching_kde_window_ids()?;
+        let mut changed = false;
+        for id in ids {
+            if run_kdotool(&["windowactivate", id.as_str()]).is_ok() {
+                changed = true;
+            }
+        }
+        if changed {
+            Ok(())
+        } else {
+            Err(anyhow!("kde show did not activate any matching window"))
+        }
     }
 
     fn hide_niri(&self) -> Result<()> {
@@ -209,6 +242,27 @@ impl DebugWindowVisibility {
         }
         Ok(addresses)
     }
+
+    fn matching_kde_window_ids(&self) -> Result<Vec<String>> {
+        ensure_kdotool_available()?;
+        let title = self.selector_title();
+        let class = self.selector_class();
+
+        let mut ids = Vec::new();
+        if let Some(t) = title.as_deref() {
+            ids.extend(kdotool_search_ids("--name", t)?);
+        }
+        if ids.is_empty() && !class.trim().is_empty() {
+            ids.extend(kdotool_search_ids("--class", &class)?);
+        }
+        ids.sort();
+        ids.dedup();
+
+        if ids.is_empty() {
+            return Err(anyhow!("no matching KDE window found via kdotool"));
+        }
+        Ok(ids)
+    }
 }
 
 fn run_cmd(bin: &str, args: &[&str]) -> Result<()> {
@@ -233,6 +287,11 @@ fn detect_wm() -> DesktopWm {
     if std::env::var_os("NIRI_SOCKET").is_some() {
         return DesktopWm::Niri;
     }
+    if std::env::var_os("KDE_FULL_SESSION").is_some()
+        || std::env::var_os("KDE_SESSION_VERSION").is_some()
+    {
+        return DesktopWm::Kde;
+    }
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_ascii_lowercase();
     if desktop.contains("hyprland") {
         return DesktopWm::Hyprland;
@@ -243,8 +302,58 @@ fn detect_wm() -> DesktopWm {
     if desktop.contains("niri") {
         return DesktopWm::Niri;
     }
+    if desktop.contains("kde") || desktop.contains("plasma") {
+        return DesktopWm::Kde;
+    }
     warn!("cannot detect supported WM for debug-window visibility");
     DesktopWm::Unknown
+}
+
+fn ensure_kdotool_available() -> Result<()> {
+    let output = Command::new("kdotool")
+        .arg("--version")
+        .output()
+        .context("failed to run kdotool --version")?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "kdotool is required for KDE window hide/show logic; install it first"
+        ))
+    }
+}
+
+fn kdotool_search_ids(flag: &str, pattern: &str) -> Result<Vec<String>> {
+    let output = Command::new("kdotool")
+        .args(["search", flag, pattern])
+        .output()
+        .with_context(|| format!("failed to run kdotool search {flag} {pattern}"))?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let ids = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    Ok(ids)
+}
+
+fn run_kdotool(args: &[&str]) -> Result<()> {
+    let output = Command::new("kdotool")
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run kdotool {}", args.join(" ")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        Err(anyhow!("kdotool failed: {}", detail))
+    }
 }
 
 fn current_niri_workspace_id() -> Result<u64> {

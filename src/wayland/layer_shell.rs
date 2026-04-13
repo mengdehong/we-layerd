@@ -15,7 +15,7 @@ use wayland_client::{
         wl_compositor::WlCompositor, wl_output::WlOutput, wl_region::WlRegion, wl_registry,
         wl_surface::WlSurface,
     },
-    Connection, Dispatch, QueueHandle,
+    Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
@@ -47,9 +47,12 @@ pub struct LayerRunConfig {
 
 struct OutputSurface {
     name: String,
+    output: Option<WlOutput>,
     surface: WlSurface,
     renderer: Option<WgpuRenderer>,
     capture_window: Option<u32>,
+    logical_size: (u32, u32),
+    buffer_scale: u32,
     capturer: Option<capture_xcomposite::XCompositeCapturer>,
     last_refind_attempt: Option<Instant>,
     configured_once: bool,
@@ -76,6 +79,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for AppState {
             LayerSurfaceEvent::Configure { serial, width, height } => {
                 layer_surface.ack_configure(serial);
                 if let Some(output) = state.outputs.get_mut(*index) {
+                    output.logical_size = (width.max(1), height.max(1));
                     if !output.configured_once {
                         output.configured_once = true;
                         info!(
@@ -83,6 +87,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for AppState {
                             serial,
                             width,
                             height,
+                            scale = output.buffer_scale,
                             "received initial layer-surface configure"
                         );
                     } else {
@@ -91,12 +96,16 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for AppState {
                             serial,
                             width,
                             height,
+                            scale = output.buffer_scale,
                             "received layer-surface configure"
                         );
                     }
                     output.surface.commit();
                     if let Some(renderer) = &mut output.renderer {
-                        renderer.resize(width.max(1), height.max(1));
+                        renderer.resize(
+                            width.max(1).saturating_mul(output.buffer_scale),
+                            height.max(1).saturating_mul(output.buffer_scale),
+                        );
                     }
                 }
             }
@@ -105,6 +114,43 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for AppState {
                 state.running = false;
             }
             _ => {}
+        }
+    }
+}
+
+impl Dispatch<WlOutput, ()> for AppState {
+    fn event(
+        state: &mut Self,
+        proxy: &WlOutput,
+        event: wayland_client::protocol::wl_output::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_output::Event::Scale { factor } = event {
+            let next_scale = u32::try_from(factor).ok().filter(|v| *v > 0).unwrap_or(1);
+            for output in &mut state.outputs {
+                let Some(bound_output) = output.output.as_ref() else {
+                    continue;
+                };
+                if bound_output.id() != proxy.id() {
+                    continue;
+                }
+                if output.buffer_scale == next_scale {
+                    continue;
+                }
+
+                output.buffer_scale = next_scale;
+                output.surface.set_buffer_scale(next_scale as i32);
+                output.surface.commit();
+                if let Some(renderer) = &mut output.renderer {
+                    renderer.resize(
+                        output.logical_size.0.saturating_mul(next_scale),
+                        output.logical_size.1.saturating_mul(next_scale),
+                    );
+                }
+                info!(output = %output.name, scale = next_scale, "updated wl_output buffer scale");
+            }
         }
     }
 }
@@ -132,7 +178,6 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for AppState {
 
 delegate_noop!(AppState: ignore WlCompositor);
 delegate_noop!(AppState: ignore WlSurface);
-delegate_noop!(AppState: ignore WlOutput);
 delegate_noop!(AppState: ignore WlRegion);
 delegate_noop!(AppState: ignore ZwlrLayerShellV1);
 
@@ -581,6 +626,9 @@ fn create_output_surface(
         index,
     );
 
+    let initial_scale = 1u32;
+    surface.set_buffer_scale(initial_scale as i32);
+
     let anchor_all = Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right;
     layer_surface.set_anchor(anchor_all);
     layer_surface.set_exclusive_zone(-1);
@@ -603,9 +651,12 @@ fn create_output_surface(
     info!(output = %name, ?capture_window, "created layer surface for output");
     state.outputs.push(OutputSurface {
         name,
+        output: wl_output.cloned(),
         surface,
         renderer,
         capture_window,
+        logical_size: (1, 1),
+        buffer_scale: initial_scale,
         capturer: None,
         last_refind_attempt: None,
         configured_once: false,
