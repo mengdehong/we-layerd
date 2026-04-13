@@ -92,18 +92,9 @@ impl DebugWindowVisibility {
     }
 
     fn hide_kde(&self) -> Result<()> {
-        let ids = self.matching_kde_window_ids()?;
-        let mut changed = false;
-        for id in ids {
-            if run_kdotool(&["windowminimize", id.as_str()]).is_ok() {
-                changed = true;
-            }
-        }
-        if changed {
-            Ok(())
-        } else {
-            Err(anyhow!("kde hide did not minimize any matching window"))
-        }
+        Err(anyhow!(
+            "kde hide-window is disabled: minimizing the XWayland debug window breaks XComposite capture"
+        ))
     }
 
     fn show_kde(&self) -> Result<()> {
