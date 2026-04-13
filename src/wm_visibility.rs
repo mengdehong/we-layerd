@@ -92,15 +92,29 @@ impl DebugWindowVisibility {
     }
 
     fn hide_kde(&self) -> Result<()> {
-        Err(anyhow!(
-            "kde hide-window is disabled: minimizing the XWayland debug window breaks XComposite capture"
-        ))
+        let ids = self.matching_kde_window_ids()?;
+        let mut changed = false;
+        for id in ids {
+            let _ = set_kde_window_state(id.as_str(), true, "below");
+            let _ = set_kde_window_state(id.as_str(), true, "skip_taskbar");
+            let _ = set_kde_window_state(id.as_str(), true, "skip_pager");
+            let _ = set_kde_window_state(id.as_str(), true, "no_border");
+            changed = true;
+        }
+        if changed {
+            Ok(())
+        } else {
+            Err(anyhow!("kde hide did not adjust any matching window"))
+        }
     }
 
     fn show_kde(&self) -> Result<()> {
         let ids = self.matching_kde_window_ids()?;
         let mut changed = false;
         for id in ids {
+            let _ = set_kde_window_state(id.as_str(), false, "below");
+            let _ = set_kde_window_state(id.as_str(), false, "skip_taskbar");
+            let _ = set_kde_window_state(id.as_str(), false, "skip_pager");
             if run_kdotool(&["windowactivate", id.as_str()]).is_ok() {
                 changed = true;
             }
@@ -345,6 +359,11 @@ fn run_kdotool(args: &[&str]) -> Result<()> {
         let detail = if !stderr.is_empty() { stderr } else { stdout };
         Err(anyhow!("kdotool failed: {}", detail))
     }
+}
+
+fn set_kde_window_state(window_id: &str, add: bool, state: &str) -> Result<()> {
+    let mode = if add { "--add" } else { "--remove" };
+    run_kdotool(&["windowstate", mode, state, window_id])
 }
 
 fn current_niri_workspace_id() -> Result<u64> {

@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    env,
     path::Path,
     sync::mpsc,
     time::{Duration, Instant},
@@ -617,10 +618,11 @@ fn create_output_surface(
 ) -> Result<()> {
     let index = state.outputs.len();
     let surface = compositor.create_surface(qh, ());
+    let layer = target_layer_for_compositor();
     let layer_surface = layer_shell.get_layer_surface(
         &surface,
         wl_output,
-        Layer::Background,
+        layer,
         format!("we-layerd-{}", index),
         qh,
         index,
@@ -648,7 +650,7 @@ fn create_output_surface(
         }
     };
 
-    info!(output = %name, ?capture_window, "created layer surface for output");
+    info!(output = %name, ?capture_window, ?layer, "created layer surface for output");
     state.outputs.push(OutputSurface {
         name,
         output: wl_output.cloned(),
@@ -665,4 +667,16 @@ fn create_output_surface(
     });
 
     Ok(())
+}
+
+fn target_layer_for_compositor() -> Layer {
+    if env::var_os("KDE_FULL_SESSION").is_some() || env::var_os("KDE_SESSION_VERSION").is_some() {
+        return Layer::Bottom;
+    }
+    let desktop = env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_ascii_lowercase();
+    if desktop.contains("kde") || desktop.contains("plasma") {
+        Layer::Bottom
+    } else {
+        Layer::Background
+    }
 }
