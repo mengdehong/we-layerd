@@ -31,6 +31,7 @@ pub struct UiSettings {
     pub show_fps: bool,
     pub borderless: bool,
     pub hide_debug_window: bool,
+    pub disable_debug_window_input: bool,
     pub hidden_workspace_name: String,
     pub selected_resolution: Option<ResolutionOption>,
     pub cgroup_enabled: bool,
@@ -180,6 +181,9 @@ pub fn build_settings_overlay<'a>(
         checkbox(ui_settings.hide_debug_window)
             .label("Hide WE debug window automatically")
             .on_toggle(Message::HideDebugWindowToggled),
+        checkbox(ui_settings.disable_debug_window_input)
+            .label("Disable WE debug window mouse input (click-through)")
+            .on_toggle(Message::DisableDebugWindowInputToggled),
         text("Hidden Workspace").size(14),
         text_input("top", &ui_settings.hidden_workspace_name)
             .on_input(Message::HiddenWorkspaceNameChanged)

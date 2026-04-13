@@ -29,6 +29,7 @@ pub struct GeneralConfig {
     pub scale_mode: ScaleMode,
     pub hide_debug_window: bool,
     pub hidden_workspace_name: String,
+    pub disable_debug_window_input: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -139,6 +140,7 @@ pub struct LaunchSettings {
     pub cgroup_cpu_max: Option<String>,
     pub hide_debug_window: bool,
     pub hidden_workspace_name: String,
+    pub disable_debug_window_input: bool,
 }
 
 impl Default for LaunchSettings {
@@ -163,6 +165,7 @@ impl Default for LaunchSettings {
             cgroup_cpu_max: None,
             hide_debug_window: true,
             hidden_workspace_name: "top".to_string(),
+            disable_debug_window_input: false,
         }
     }
 }
@@ -191,6 +194,7 @@ impl Default for GeneralConfig {
             scale_mode: ScaleMode::Cover,
             hide_debug_window: true,
             hidden_workspace_name: "top".to_string(),
+            disable_debug_window_input: false,
         }
     }
 }
@@ -207,6 +211,7 @@ impl Default for AppConfig {
                 scale_mode: ScaleMode::Cover,
                 hide_debug_window: true,
                 hidden_workspace_name: "top".to_string(),
+                disable_debug_window_input: false,
             },
             wine: WineConfig {
                 command: "wine".to_string(),
@@ -238,6 +243,7 @@ pub fn build_config(
     cfg.general.show_fps = settings.show_fps;
     cfg.general.hide_debug_window = settings.hide_debug_window;
     cfg.general.hidden_workspace_name = settings.hidden_workspace_name.clone();
+    cfg.general.disable_debug_window_input = settings.disable_debug_window_input;
     cfg.wine.command = settings.wine_command.clone();
     cfg.wine.command_mode = WineCommandMode::ExeWithArgs;
     cfg.wine.wallpaper_exe = settings.wallpaper_exe.clone();
@@ -426,6 +432,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     settings.show_fps = cfg.general.show_fps;
     settings.hide_debug_window = cfg.general.hide_debug_window;
     settings.hidden_workspace_name = cfg.general.hidden_workspace_name;
+    settings.disable_debug_window_input = cfg.general.disable_debug_window_input;
 
     settings.wm_class_contains = cfg.capture.wm_class_contains;
     settings.play_in_window_title = cfg.capture.title_contains;

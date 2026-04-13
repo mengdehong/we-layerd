@@ -14,7 +14,7 @@ use crate::{
     wayland,
     wine::launcher::{spawn_transient_command, WineProcessHandle},
     wm_visibility::DebugWindowVisibility,
-    x11::{capture_xcomposite, window_finder},
+    x11::{capture_xcomposite, window_finder, window_input},
 };
 use std::sync::mpsc;
 
@@ -110,6 +110,14 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let capture_window = match window_finder::find_window_for_process(&capture_match, wine_pid)? {
         Some(found) => {
             info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
+            if let Err(err) = window_input::apply_wallpaper_window_hints(found.window) {
+                warn!(error = %err, window = found.window, "failed to apply wallpaper window hints");
+            }
+            if cfg.general.disable_debug_window_input {
+                if let Err(err) = window_input::set_mouse_passthrough(found.window) {
+                    warn!(error = %err, window = found.window, "failed to set debug window mouse passthrough");
+                }
+            }
             if debug_visibility.auto_hide {
                 if let Err(err) = debug_visibility.hide() {
                     warn!(error = %err, "failed to auto-hide debug window");
@@ -138,6 +146,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             scale_mode: cfg.general.scale_mode,
             auto_refind_window: cfg.general.refind_window_on_capture_error,
             capture_match,
+            disable_debug_window_input: cfg.general.disable_debug_window_input,
             wine_pid,
         },
         Some(&control_rx),

@@ -30,7 +30,7 @@ use crate::{
     ipc::ControlCommand,
     video::decoder::VideoPlayer,
     wayland::{outputs, render_wgpu::WgpuRenderer},
-    x11::{capture_xcomposite, window_finder},
+    x11::{capture_xcomposite, window_finder, window_input},
 };
 
 #[derive(Debug, Clone)]
@@ -43,6 +43,7 @@ pub struct LayerRunConfig {
     pub scale_mode: ScaleMode,
     pub auto_refind_window: bool,
     pub capture_match: CaptureConfig,
+    pub disable_debug_window_input: bool,
     pub wine_pid: Option<u32>,
 }
 
@@ -294,6 +295,24 @@ pub fn run_single_background_surface(
                                     Err(err) => {
                                         warn!(error = %err, output = %output.name, window, "capture failed for output");
                                         output.capturer = None;
+                                        match window_input::restore_if_minimized(window) {
+                                            Ok(true) => {
+                                                info!(output = %output.name, window, "restored minimized X11 debug window");
+                                                let _ = window_input::apply_wallpaper_window_hints(window);
+                                                if run_cfg.disable_debug_window_input {
+                                                    let _ = window_input::set_mouse_passthrough(window);
+                                                }
+                                            }
+                                            Ok(false) => {}
+                                            Err(restore_err) => {
+                                                warn!(
+                                                    error = %restore_err,
+                                                    output = %output.name,
+                                                    window,
+                                                    "failed to check or restore minimized X11 debug window"
+                                                );
+                                            }
+                                        }
 
                                         if run_cfg.auto_refind_window {
                                             let now = Instant::now();
@@ -317,6 +336,26 @@ pub fn run_single_background_surface(
                                                 if output.capture_window != Some(found.window) {
                                                     output.capture_window = Some(found.window);
                                                     output.capturer = None;
+                                                    if let Err(err) = window_input::apply_wallpaper_window_hints(found.window) {
+                                                        warn!(
+                                                            error = %err,
+                                                            output = %output.name,
+                                                            window = found.window,
+                                                            "failed to apply wallpaper window hints on rebound window"
+                                                        );
+                                                    }
+                                                    if run_cfg.disable_debug_window_input {
+                                                        if let Err(err) =
+                                                            window_input::set_mouse_passthrough(found.window)
+                                                        {
+                                                            warn!(
+                                                                error = %err,
+                                                                output = %output.name,
+                                                                window = found.window,
+                                                                "failed to apply mouse passthrough on rebound window"
+                                                            );
+                                                        }
+                                                    }
                                                     info!(output = %output.name, window = found.window, "rebound output to rediscovered X11 window");
                                                 }
                                             }

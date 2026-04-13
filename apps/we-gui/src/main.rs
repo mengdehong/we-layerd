@@ -76,6 +76,7 @@ enum Message {
     ShowFpsToggled(bool),
     BorderlessToggled(bool),
     HideDebugWindowToggled(bool),
+    DisableDebugWindowInputToggled(bool),
     HiddenWorkspaceNameChanged(String),
     ResolutionSelected(settings_panel::ResolutionOption),
     CgroupEnabledToggled(bool),
@@ -256,6 +257,11 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::HideDebugWindowToggled(value) => {
             app.ui_settings.hide_debug_window = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::DisableDebugWindowInputToggled(value) => {
+            app.ui_settings.disable_debug_window_input = value;
             sync_launch_settings(app);
             Task::none()
         }
@@ -534,12 +540,16 @@ impl App {
             show_fps: launch_settings.show_fps,
             borderless: launch_settings.borderless,
             hide_debug_window: launch_settings.hide_debug_window,
+            disable_debug_window_input: launch_settings.disable_debug_window_input,
             hidden_workspace_name: launch_settings.hidden_workspace_name.clone(),
             selected_resolution,
-            cgroup_enabled: false,
-            cgroup_mode: CgroupModeOption::Detect,
-            cgroup_memory_max: String::new(),
-            cgroup_cpu_max: String::new(),
+            cgroup_enabled: launch_settings.cgroup_enabled,
+            cgroup_mode: match launch_settings.cgroup_mode {
+                CgroupMode::Detect => CgroupModeOption::Detect,
+                CgroupMode::LimitWine => CgroupModeOption::LimitWine,
+            },
+            cgroup_memory_max: launch_settings.cgroup_memory_max.clone().unwrap_or_default(),
+            cgroup_cpu_max: launch_settings.cgroup_cpu_max.clone().unwrap_or_default(),
             status_text: "status unavailable: daemon is not running".to_string(),
         };
         (
@@ -706,6 +716,7 @@ fn sync_launch_settings(app: &mut App) {
     app.launch_settings.cgroup_memory_max = non_empty_trimmed(&app.ui_settings.cgroup_memory_max);
     app.launch_settings.cgroup_cpu_max = non_empty_trimmed(&app.ui_settings.cgroup_cpu_max);
     app.launch_settings.hide_debug_window = app.ui_settings.hide_debug_window;
+    app.launch_settings.disable_debug_window_input = app.ui_settings.disable_debug_window_input;
     app.launch_settings.hidden_workspace_name = app.ui_settings.hidden_workspace_name.clone();
 }
 

@@ -35,6 +35,8 @@ pub struct GeneralConfig {
     pub hide_debug_window: bool,
     #[serde(default = "default_hidden_workspace_name")]
     pub hidden_workspace_name: String,
+    #[serde(default)]
+    pub disable_debug_window_input: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -206,6 +208,7 @@ impl Default for GeneralConfig {
             scale_mode: ScaleMode::default(),
             hide_debug_window: default_hide_debug_window(),
             hidden_workspace_name: default_hidden_workspace_name(),
+            disable_debug_window_input: false,
         }
     }
 }
