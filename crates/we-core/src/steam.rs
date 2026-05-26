@@ -41,28 +41,36 @@ pub fn discover_wallpaper_engine_exe() -> Option<PathBuf> {
     None
 }
 
-pub fn detect_wallpaper_engine_install_state() -> WallpaperEngineInstallState {
-    for root in steam_common_roots() {
-        let app_dir = root.join("wallpaper_engine");
-        if !app_dir.is_dir() {
-            continue;
-        }
+pub fn detect_wallpaper_engine_install_state(wallpaper_exe: String) -> WallpaperEngineInstallState {
+    if wallpaper_exe.trim().is_empty() {
+        for root in steam_common_roots() {
+            let app_dir = root.join("wallpaper_engine");
+            if !app_dir.is_dir() {
+                continue;
+            }
 
-        let exe64 = app_dir.join("wallpaper64.exe");
-        if exe64.is_file() {
+            let exe64 = app_dir.join("wallpaper64.exe");
+            if exe64.is_file() {
+                return WallpaperEngineInstallState::Installed { app_dir, exe_path: exe64 };
+            }
+
+            let exe32 = app_dir.join("wallpaper32.exe");
+            if exe32.is_file() {
+                return WallpaperEngineInstallState::Installed { app_dir, exe_path: exe32 };
+            }
+
+            if app_dir.join("installer.exe").is_file() {
+                return WallpaperEngineInstallState::FirstRunRequired { app_dir };
+            }
+        }
+    } else {
+        let exe64 = PathBuf::from(wallpaper_exe);
+        let mut app_dir = exe64.clone();
+        app_dir.pop();
+        if exe64.is_file() && exe64.ends_with("wallpaper64.exe") {
             return WallpaperEngineInstallState::Installed { app_dir, exe_path: exe64 };
         }
-
-        let exe32 = app_dir.join("wallpaper32.exe");
-        if exe32.is_file() {
-            return WallpaperEngineInstallState::Installed { app_dir, exe_path: exe32 };
-        }
-
-        if app_dir.join("installer.exe").is_file() {
-            return WallpaperEngineInstallState::FirstRunRequired { app_dir };
-        }
     }
-
     WallpaperEngineInstallState::NotInstalled
 }
 

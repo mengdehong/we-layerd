@@ -52,6 +52,7 @@ pub struct WineConfig {
     #[serde(default)]
     pub command_mode: WineCommandMode,
     pub wallpaper_exe: String,
+    pub workshop_path: String,
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -122,6 +123,7 @@ pub enum CgroupMode {
 #[derive(Debug, Clone)]
 pub struct LaunchSettings {
     pub wallpaper_exe: String,
+    pub workshop_path: String,
     pub launcher: WindowsLauncher,
     pub wine_command: String,
     pub proton_path: Option<String>,
@@ -147,6 +149,7 @@ impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
             wallpaper_exe: String::new(),
+            workshop_path: String::new(),
             launcher: WindowsLauncher::Wine,
             wine_command: "wine".to_string(),
             proton_path: None,
@@ -217,6 +220,7 @@ impl Default for AppConfig {
                 command: "wine".to_string(),
                 command_mode: WineCommandMode::ExeWithArgs,
                 wallpaper_exe: String::new(),
+                workshop_path: String::new(),
                 args: Vec::new(),
                 env: BTreeMap::new(),
             },
@@ -427,7 +431,6 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     let cfg: AppConfig =
         toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
     let mut settings = LaunchSettings::default();
-
     settings.fps_limit = cfg.general.fps_limit;
     settings.show_fps = cfg.general.show_fps;
     settings.hide_debug_window = cfg.general.hide_debug_window;
@@ -443,6 +446,8 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     settings.cgroup_cpu_max = cfg.cgroup.cpu_max;
 
     settings.wallpaper_exe = cfg.wine.wallpaper_exe;
+    settings.workshop_path = cfg.wine.workshop_path;
+
     match cfg.wine.command_mode {
         WineCommandMode::ExeWithArgs => {
             settings.launcher = WindowsLauncher::Wine;
@@ -458,8 +463,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     if let Some(width) = arg_value(&cfg.wine.args, "-width").and_then(|v| v.parse::<u32>().ok()) {
         settings.width = width.max(1);
     }
-    if let Some(height) = arg_value(&cfg.wine.args, "-height").and_then(|v| v.parse::<u32>().ok())
-    {
+    if let Some(height) = arg_value(&cfg.wine.args, "-height").and_then(|v| v.parse::<u32>().ok()) {
         settings.height = height.max(1);
     }
     if let Some(x) = arg_value(&cfg.wine.args, "-x").and_then(|v| v.parse::<i32>().ok()) {
