@@ -379,9 +379,13 @@ pub fn build_config(
                     "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
                     steam_root.display().to_string(),
                 );
+            }
+            if let Some(wallpaper_root) =
+                derive_steam_root_from_proton_path(exe_path.to_str().unwrap())
+            {
                 cfg.wine.env.insert(
                     "STEAM_COMPAT_DATA_PATH".to_string(),
-                    steam_root
+                    wallpaper_root
                         .join("steamapps")
                         .join("compatdata")
                         .join(WALLPAPER_ENGINE_APP_ID.to_string())
