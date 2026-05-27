@@ -251,6 +251,7 @@ pub fn build_config(
     cfg.wine.command = settings.wine_command.clone();
     cfg.wine.command_mode = WineCommandMode::ExeWithArgs;
     cfg.wine.wallpaper_exe = settings.wallpaper_exe.clone();
+    cfg.wine.workshop_path = settings.workshop_path.clone();
     cfg.wine.env.clear();
     cfg.capture.wm_class_contains = settings.wm_class_contains.clone();
     cfg.capture.title_contains = settings.play_in_window_title.clone();
