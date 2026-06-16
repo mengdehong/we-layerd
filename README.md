@@ -6,6 +6,7 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 
 ## Features
 - Wine mode: launch `wallpaper64.exe`, capture XWayland/X11 output, render to Wayland layer-shell.
+- GNOME mode: register the Wallpaper Engine XWayland window with a GNOME Shell extension and keep the real window pinned at the desktop bottom layer.
 - Native video mode: FFmpeg + `wgpu` pipeline.
 - Windows launcher mode: Wine / Proton (Proton auto-discovery from Steam paths).
 - GUI companion (`we-gui`) with tray controls.
@@ -16,7 +17,8 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 ## Dependencies
 - Rust toolchain (`cargo`, `rustc`) for building.
 - `pkg-config` (`pkgconf`) for native library detection during build.
-- Wayland compositor with `zwlr_layer_shell_v1` (target: niri; should also work on Hyprland/sway).
+- Wayland compositor with `zwlr_layer_shell_v1` for layer-shell mode (target: niri; should also work on Hyprland/sway).
+- GNOME Shell 45+ for GNOME window-bridge mode, plus the bundled extension from [contrib/gnome-shell-extension](./contrib/gnome-shell-extension).
 - XWayland/X11 for Wine render window capture.
 - X11 Composite extension.
 - Vulkan/GL stack usable by `wgpu`.
@@ -79,6 +81,23 @@ niri startup sizing (important):
 - Do not resize this window after launch via IPC actions; it can lead to black output.
 - Define a niri `window-rule` that matches `WE-DEBUG-WINDOW` at open time.
 - In this project, use `match app-id="WE-DEBUG-WINDOW"` directly.
+
+Backend selection:
+```toml
+[general]
+backend = "auto" # auto | layer_shell | gnome_shell
+```
+- `auto`: uses `gnome_shell` when `XDG_CURRENT_DESKTOP` indicates GNOME, otherwise `layer_shell`.
+- `layer_shell`: always use the native Wayland background renderer.
+- `gnome_shell`: require the GNOME Shell extension D-Bus bridge.
+
+GNOME extension:
+```toml
+[gnome]
+extension_dbus_name = "io.github.weLayerd.Gnome"
+```
+Install the extension directory [contrib/gnome-shell-extension/we-layerd@aromatic](./contrib/gnome-shell-extension/we-layerd@aromatic)
+into `~/.local/share/gnome-shell/extensions/`, then enable it in GNOME Extensions before launching `we-layerd`.
 
 Example niri config:
 ```kdl
@@ -148,6 +167,7 @@ we-layerd print-config --config ~/.config/we-layerd/config.toml
 - niri shows half-screen / odd scaling at startup: add a niri `window-rule` with `match app-id="WE-DEBUG-WINDOW"` and `open-maximized-to-edges true`.
 - Capture errors: ensure XComposite is available and the window still exists.
 - No layer surface: compositor may not expose `zwlr_layer_shell_v1`.
+- GNOME bridge unavailable: confirm the bundled `we-layerd@aromatic` extension is installed, enabled, and exporting `io.github.weLayerd.Gnome` on the session bus.
 - Wine path error: verify `wine.wallpaper_exe` points to an existing `.exe`.
 - `ctl` cannot connect: check if daemon is running and user/session match (`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`).
 - cgroup metrics empty / limits not applied: verify cgroup v2 and user delegation permissions; see `ctl status` `status.cgroup.last_error`.

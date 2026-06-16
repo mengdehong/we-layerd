@@ -2,6 +2,7 @@ mod app;
 mod cgroup;
 mod cli;
 mod config;
+mod gnome;
 mod ipc;
 mod logging;
 mod video;

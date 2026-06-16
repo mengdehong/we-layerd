@@ -5735,6 +5735,7 @@ dependencies = [
  "wayland-protocols-wlr",
  "wgpu 0.20.1",
  "x11rb",
+ "zbus 4.4.0",
 ]
 
 [[package]]

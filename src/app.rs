@@ -10,6 +10,7 @@ use tracing::{info, warn};
 use crate::{
     cgroup::RuntimeCgroup,
     config::{Config, RuntimeMode, RuntimeWallpaperType},
+    gnome::{self, ResolvedBackend},
     ipc::{self, ControlCommand},
     wayland,
     wine::launcher::{spawn_transient_command, WineProcessHandle},
@@ -110,25 +111,13 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let capture_window = match window_finder::find_window_for_process(&capture_match, wine_pid)? {
         Some(found) => {
             info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
-            if let Err(err) = window_input::apply_wallpaper_window_hints(found.window) {
-                warn!(error = %err, window = found.window, "failed to apply wallpaper window hints");
-            }
-            if cfg.general.disable_debug_window_input {
-                if let Err(err) = window_input::set_mouse_passthrough(found.window) {
-                    warn!(error = %err, window = found.window, "failed to set debug window mouse passthrough");
-                }
-            }
-            if debug_visibility.auto_hide {
-                if let Err(err) = debug_visibility.hide() {
-                    warn!(error = %err, "failed to auto-hide debug window");
-                }
-            }
+            apply_debug_window_setup(&cfg, &debug_visibility, found.window);
             if let Some(path) = cfg.capture.debug_save_frame_png.as_deref() {
                 let frame = capture_xcomposite::capture_single_frame(found.window)?;
                 capture_xcomposite::save_frame_png(&frame, Path::new(path))?;
                 info!(path, "saved debug XComposite frame");
             }
-            Some(found.window)
+            Some(found)
         }
         None => {
             warn!("no X11 window found yet, continuing with Wayland layer loop");
@@ -136,9 +125,19 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         }
     };
 
+    if matches!(gnome::resolve_backend(&cfg), ResolvedBackend::GnomeShell) {
+        return gnome::run_window_bridge(
+            &cfg,
+            &capture_match,
+            capture_window,
+            wine_pid,
+            &control_rx,
+        );
+    }
+
     wayland::layer_shell::run_single_background_surface(
         wayland::layer_shell::LayerRunConfig {
-            capture_window,
+            capture_window: capture_window.as_ref().map(|found| found.window),
             output_window_map: cfg.capture.output_window_map.clone(),
             fps_limit: cfg.general.fps_limit,
             show_fps: cfg.general.show_fps,
@@ -208,6 +207,7 @@ fn run_video_native(
 }
 
 pub fn doctor() -> Result<()> {
+    let cfg = Config::default();
     for key in ["WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY"] {
         match std::env::var(key) {
             Ok(value) => info!(%key, %value, "environment variable set"),
@@ -224,6 +224,13 @@ pub fn doctor() -> Result<()> {
         Ok(true) => info!("zwlr_layer_shell_v1 global is available"),
         Ok(false) => warn!("zwlr_layer_shell_v1 global not found on this compositor"),
         Err(err) => warn!(error = %err, "failed to query Wayland layer-shell support"),
+    }
+
+    if gnome::is_gnome_session() {
+        match gnome::doctor(&cfg) {
+            Ok(()) => {}
+            Err(err) => warn!(error = %err, "GNOME extension D-Bus probe failed"),
+        }
     }
 
     Ok(())
@@ -254,4 +261,20 @@ fn ensure_runtime_access() -> Result<()> {
             xauthority.as_deref().unwrap_or("<unset>")
         ))
     })
+}
+
+fn apply_debug_window_setup(cfg: &Config, debug_visibility: &DebugWindowVisibility, window: u32) {
+    if let Err(err) = window_input::apply_wallpaper_window_hints(window) {
+        warn!(error = %err, window, "failed to apply wallpaper window hints");
+    }
+    if cfg.general.disable_debug_window_input {
+        if let Err(err) = window_input::set_mouse_passthrough(window) {
+            warn!(error = %err, window, "failed to set debug window mouse passthrough");
+        }
+    }
+    if debug_visibility.auto_hide {
+        if let Err(err) = debug_visibility.hide() {
+            warn!(error = %err, "failed to auto-hide debug window");
+        }
+    }
 }

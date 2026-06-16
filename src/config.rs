@@ -8,6 +8,8 @@ pub struct Config {
     #[serde(default)]
     pub general: GeneralConfig,
     #[serde(default)]
+    pub gnome: GnomeConfig,
+    #[serde(default)]
     pub wine: WineConfig,
     #[serde(default)]
     pub capture: CaptureConfig,
@@ -19,6 +21,8 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
+    #[serde(default)]
+    pub backend: Backend,
     #[serde(default = "default_fps")]
     pub fps_limit: u32,
     #[serde(default = "default_restart_wine")]
@@ -37,6 +41,26 @@ pub struct GeneralConfig {
     pub hidden_workspace_name: String,
     #[serde(default)]
     pub disable_debug_window_input: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Backend {
+    Auto,
+    LayerShell,
+    GnomeShell,
+}
+
+impl Default for Backend {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GnomeConfig {
+    #[serde(default = "default_gnome_extension_dbus_name")]
+    pub extension_dbus_name: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,6 +185,10 @@ fn default_fps() -> u32 {
     30
 }
 
+fn default_gnome_extension_dbus_name() -> String {
+    "io.github.weLayerd.Gnome".to_string()
+}
+
 fn default_wine_cmd() -> String {
     "wine".to_string()
 }
@@ -189,6 +217,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             general: GeneralConfig::default(),
+            gnome: GnomeConfig::default(),
             wine: WineConfig::default(),
             capture: CaptureConfig::default(),
             runtime: None,
@@ -200,6 +229,7 @@ impl Default for Config {
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
+            backend: Backend::default(),
             fps_limit: default_fps(),
             restart_wine_on_exit: default_restart_wine(),
             refind_window_on_capture_error: default_refind_window(),
@@ -210,6 +240,12 @@ impl Default for GeneralConfig {
             hidden_workspace_name: default_hidden_workspace_name(),
             disable_debug_window_input: false,
         }
+    }
+}
+
+impl Default for GnomeConfig {
+    fn default() -> Self {
+        Self { extension_dbus_name: default_gnome_extension_dbus_name() }
     }
 }
 

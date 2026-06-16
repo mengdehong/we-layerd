@@ -17,6 +17,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct WindowFinderResult {
     pub window: Window,
     pub scanned_windows: usize,
+    pub metadata: WindowMetadata,
 }
 
 #[derive(Debug, Clone)]
@@ -27,19 +28,27 @@ struct Atoms {
     utf8_string: Atom,
 }
 
-#[derive(Default, Debug)]
-struct WindowMetadata {
-    wm_class: String,
-    title: String,
-    pid: Option<u32>,
-    is_viewable: bool,
-    width: u16,
-    height: u16,
+#[derive(Default, Debug, Clone)]
+pub struct WindowMetadata {
+    pub wm_class: String,
+    pub title: String,
+    pub pid: Option<u32>,
+    pub is_viewable: bool,
+    pub width: u16,
+    pub height: u16,
 }
 
 pub fn find_window_for_process(
     config: &CaptureConfig,
     fallback_pid: Option<u32>,
+) -> Result<Option<WindowFinderResult>> {
+    find_window_for_process_with_timeout(config, fallback_pid, DEFAULT_TIMEOUT)
+}
+
+pub fn find_window_for_process_with_timeout(
+    config: &CaptureConfig,
+    fallback_pid: Option<u32>,
+    timeout: Duration,
 ) -> Result<Option<WindowFinderResult>> {
     let (conn, screen_num) =
         RustConnection::connect(None).context("failed to connect to X11 display")?;
@@ -50,28 +59,9 @@ pub fn find_window_for_process(
     let start = Instant::now();
     let mut last_scan_count = 0;
 
-    while start.elapsed() < DEFAULT_TIMEOUT {
-        let mut windows = Vec::new();
-        collect_windows(&conn, root, &mut windows)?;
-        last_scan_count = windows.len();
-
-        let mut best: Option<(i64, Window, WindowMetadata)> = None;
-
-        for window in windows {
-            let meta = window_metadata(&conn, &atoms, window)?;
-            if !is_match(config, target_pid, &meta) {
-                continue;
-            }
-            let score = score_window(target_pid, &meta);
-            if score < 0 {
-                continue;
-            }
-
-            let is_better = best.as_ref().map(|(s, _, _)| score > *s).unwrap_or(true);
-            if is_better {
-                best = Some((score, window, meta));
-            }
-        }
+    while start.elapsed() < timeout {
+        let (best, scanned_windows) = scan_windows(&conn, root, &atoms, config, target_pid)?;
+        last_scan_count = scanned_windows;
 
         if let Some((score, window, meta)) = best {
             info!(
@@ -84,7 +74,11 @@ pub fn find_window_for_process(
                 height = meta.height,
                 "matched X11 window"
             );
-            return Ok(Some(WindowFinderResult { window, scanned_windows: last_scan_count }));
+            return Ok(Some(WindowFinderResult {
+                window,
+                scanned_windows: last_scan_count,
+                metadata: meta,
+            }));
         }
 
         std::thread::sleep(POLL_INTERVAL);
@@ -98,6 +92,20 @@ pub fn find_window_for_process(
         "failed to find matching X11 window within timeout"
     );
     Ok(None)
+}
+
+pub fn find_window_for_process_once(
+    config: &CaptureConfig,
+    fallback_pid: Option<u32>,
+) -> Result<Option<WindowFinderResult>> {
+    let (conn, screen_num) =
+        RustConnection::connect(None).context("failed to connect to X11 display")?;
+    let root = conn.setup().roots[screen_num].root;
+    let atoms = intern_atoms(&conn)?;
+    let target_pid = config.net_wm_pid.or(fallback_pid);
+    let (best, scanned_windows) = scan_windows(&conn, root, &atoms, config, target_pid)?;
+
+    Ok(best.map(|(_, window, metadata)| WindowFinderResult { window, scanned_windows, metadata }))
 }
 
 fn score_window(target_pid: Option<u32>, meta: &WindowMetadata) -> i64 {
@@ -155,6 +163,37 @@ fn collect_windows(conn: &RustConnection, root: Window, out: &mut Vec<Window>) -
         stack.extend(tree.children);
     }
     Ok(())
+}
+
+fn scan_windows(
+    conn: &RustConnection,
+    root: Window,
+    atoms: &Atoms,
+    config: &CaptureConfig,
+    target_pid: Option<u32>,
+) -> Result<(Option<(i64, Window, WindowMetadata)>, usize)> {
+    let mut windows = Vec::new();
+    collect_windows(conn, root, &mut windows)?;
+    let scanned_windows = windows.len();
+
+    let mut best: Option<(i64, Window, WindowMetadata)> = None;
+    for window in windows {
+        let meta = window_metadata(conn, atoms, window)?;
+        if !is_match(config, target_pid, &meta) {
+            continue;
+        }
+        let score = score_window(target_pid, &meta);
+        if score < 0 {
+            continue;
+        }
+
+        let is_better = best.as_ref().map(|(s, _, _)| score > *s).unwrap_or(true);
+        if is_better {
+            best = Some((score, window, meta));
+        }
+    }
+
+    Ok((best, scanned_windows))
 }
 
 fn window_metadata(conn: &RustConnection, atoms: &Atoms, window: Window) -> Result<WindowMetadata> {
