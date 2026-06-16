@@ -162,7 +162,7 @@ fn effective_runtime_config(cfg: &Config) -> Config {
         }
     }
     runtime_cfg.capture = capture_match;
-    if matches!(gnome::resolve_backend(cfg), ResolvedBackend::GnomeShell) {
+    if runtime_cfg.wine.args.iter().any(|arg| arg == "-playInWindow") {
         apply_xwayland_root_size(&mut runtime_cfg);
     }
     runtime_cfg
