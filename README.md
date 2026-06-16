@@ -7,6 +7,7 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 ## Features
 - Wine mode: launch `wallpaper64.exe`, capture XWayland/X11 output, render to Wayland layer-shell.
 - GNOME mode: register the Wallpaper Engine XWayland window with a GNOME Shell extension and keep the real window pinned at the desktop bottom layer.
+- Desktop environment support: KDE Plasma and GNOME Shell.
 - Native video mode: FFmpeg + `wgpu` pipeline.
 - Windows launcher mode: Wine / Proton (Proton auto-discovery from Steam paths).
 - GUI companion (`we-gui`) with tray controls.
@@ -17,6 +18,9 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 ## Dependencies
 - Rust toolchain (`cargo`, `rustc`) for building.
 - `pkg-config` (`pkgconf`) for native library detection during build.
+- Supported desktop environments:
+  - KDE Plasma (via layer-shell mode on Wayland).
+  - GNOME Shell 45+ (via the bundled GNOME Shell extension bridge).
 - Wayland compositor with `zwlr_layer_shell_v1` for layer-shell mode (target: niri; should also work on Hyprland/sway).
 - GNOME Shell 45+ for GNOME window-bridge mode, plus the bundled extension from [contrib/gnome-shell-extension](./contrib/gnome-shell-extension).
 - XWayland/X11 for Wine render window capture.
@@ -44,83 +48,13 @@ install -Dm755 target/release/we-gui ~/.local/bin/we-gui
 ```
 
 ## Config
-Start from:
-```bash
-cp config.example.toml ~/.config/we-layerd/config.toml
-```
-
-Minimal required fields:
-- `wine.wallpaper_exe` (usually `~/.local/share/Steam/steamapps/common/wallpaper_engine/wallpaper64.exe`).
-- `wine.args` for scene/web mode launch (`openWallpaper` args).
-- `runtime` block (`wine_layerd` or `video_native`).
-- Optionally tune `capture` match rules.
-
-Optional cgroup block:
-```toml
-[cgroup]
-enabled = false
-mode = "detect"      # detect | limit_wine
-memory_max = "max"   # optional, e.g. "2147483648"
-cpu_max = "max 100000" # optional, e.g. "50000 100000"
-```
-
-Debug window visibility:
-```toml
-[general]
-hide_debug_window = true
-hidden_workspace_name = "top"
-```
-`hide_debug_window` defaults to `true`. `hidden_workspace_name` controls the hide target:
-- Hyprland: special workspace name (`special:<name>`).
-- sway: uses scratchpad behavior.
-- niri: target workspace spec; use `top` to move to the top/first workspace.
-For niri, hide flow is `move-window-to-workspace` first, then `move-window-to-floating`.
-
-niri startup sizing (important):
-- Wallpaper Engine debug window may open as half-screen by default under niri tiling.
-- Do not resize this window after launch via IPC actions; it can lead to black output.
-- Define a niri `window-rule` that matches `WE-DEBUG-WINDOW` at open time.
-- In this project, use `match app-id="WE-DEBUG-WINDOW"` directly.
-
-Backend selection:
-```toml
-[general]
-backend = "auto" # auto | layer_shell | gnome_shell
-```
-- `auto`: uses `gnome_shell` when `XDG_CURRENT_DESKTOP` indicates GNOME, otherwise `layer_shell`.
-- `layer_shell`: always use the native Wayland background renderer.
-- `gnome_shell`: require the GNOME Shell extension D-Bus bridge.
-
-GNOME extension:
-```toml
-[gnome]
-extension_dbus_name = "io.github.weLayerd.Gnome"
-```
-Install the extension directory [contrib/gnome-shell-extension/we-layerd@aromatic](./contrib/gnome-shell-extension/we-layerd@aromatic)
-into `~/.local/share/gnome-shell/extensions/`, then enable it in GNOME Extensions before launching `we-layerd`.
-
-Example niri config:
-```kdl
-window-rule {
-    match app-id="WE-DEBUG-WINDOW"
-    open-floating false
-    open-maximized-to-edges true
-    open-focused false
-}
-```
-Check with:
-```bash
-niri msg -j windows
-```
-
-Wine/Proton launch behavior:
-```toml
-[wine]
-command = "wine"
-command_mode = "exe_with_args" # exe_with_args | command_only
-```
-- `exe_with_args`: runs `command wallpaper_exe ...args` (Wine mode).
-- `command_only`: runs `command ...args` (Proton mode via `proton run ...`).
+See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for:
+- config file setup
+- backend selection
+- GNOME extension setup
+- niri sizing rules
+- Wine / Proton launch modes
+- optional cgroup config
 
 ## Usage
 After `we-layerd`/`we-gui` are in `PATH`:
@@ -135,39 +69,8 @@ Start daemon directly:
 we-layerd run --config ~/.config/we-layerd/config.toml
 ```
 
-Control a running daemon:
-```bash
-we-layerd ctl stop
-we-layerd ctl pause
-we-layerd ctl resume
-we-layerd ctl reload
-we-layerd ctl status
-we-layerd ctl hide-window
-we-layerd ctl show-window
-```
-
-Other commands:
-```bash
-we-layerd doctor
-we-layerd print-config --config ~/.config/we-layerd/config.toml
-```
-
-## IPC and single-instance
-- On Linux, control IPC uses an abstract Unix socket name (`we-layerd.control.<uid>`).
-- File-socket fallback is kept for compatibility.
-- Daemon startup acquires an instance lock; launching a second instance under the same user returns an `already running` error.
-
-## Troubleshooting
-- `WAYLAND_DISPLAY` missing: you are not in a Wayland session shell.
-- `DISPLAY` missing: XWayland/X11 bridge is not visible to the process.
-- `Invalid MIT-MAGIC-COOKIE-1 key`：X11 鉴权失败。请从当前图形登录会话里直接启动 `we-layerd`，或在启动前通过 `XAUTHORITY` 指向当前会话使用的 X11 cookie 文件。
-- `Wallpaper Engine is not installed. Please install it, or choose paths in Settings.`: Steam common path does not contain `wallpaper_engine`. Install Wallpaper Engine first, or set paths manually in Settings.
-- `Wallpaper Engine first-run setup is pending. Launch it once in Steam to run installer.exe.`: `installer.exe` exists but `wallpaper64.exe` is missing. Run Wallpaper Engine once in Steam to complete first-run setup.
-- Cannot find window: relax `capture.wm_class_contains` / `capture.title_contains`, or pin `capture.net_wm_pid`.
-- niri shows half-screen / odd scaling at startup: add a niri `window-rule` with `match app-id="WE-DEBUG-WINDOW"` and `open-maximized-to-edges true`.
-- Capture errors: ensure XComposite is available and the window still exists.
-- No layer surface: compositor may not expose `zwlr_layer_shell_v1`.
-- GNOME bridge unavailable: confirm the bundled `we-layerd@aromatic` extension is installed, enabled, and exporting `io.github.weLayerd.Gnome` on the session bus.
-- Wine path error: verify `wine.wallpaper_exe` points to an existing `.exe`.
-- `ctl` cannot connect: check if daemon is running and user/session match (`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`).
-- cgroup metrics empty / limits not applied: verify cgroup v2 and user delegation permissions; see `ctl status` `status.cgroup.last_error`.
+More docs:
+- [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
+- [docs/ADVANCED.md](./docs/ADVANCED.md)
+- [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
