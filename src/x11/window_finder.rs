@@ -117,6 +117,10 @@ fn score_window(target_pid: Option<u32>, meta: &WindowMetadata) -> i64 {
         return -1;
     }
 
+    if is_frame_window(meta) {
+        return -1;
+    }
+
     let mut score: i64 = 0;
     if target_pid.is_some() && meta.pid == target_pid {
         score += 200;
@@ -126,8 +130,16 @@ fn score_window(target_pid: Option<u32>, meta: &WindowMetadata) -> i64 {
         score += 80;
     }
 
+    if contains_case_insensitive(&meta.title, "WE-DEBUG-WINDOW") {
+        score += 120;
+    }
+
     if contains_case_insensitive(&meta.wm_class, "wallpaper") {
         score += 40;
+    }
+
+    if contains_case_insensitive(&meta.wm_class, "wallpaper64.exe") {
+        score += 120;
     }
 
     score += (meta.width as i64 * meta.height as i64 / 10000).min(120);
@@ -227,6 +239,10 @@ fn window_metadata(conn: &RustConnection, atoms: &Atoms, window: Window) -> Resu
 }
 
 fn is_match(config: &CaptureConfig, _target_pid: Option<u32>, meta: &WindowMetadata) -> bool {
+    if is_frame_window(meta) {
+        return false;
+    }
+
     let class_ok = config
         .wm_class_contains
         .as_ref()
@@ -241,6 +257,10 @@ fn is_match(config: &CaptureConfig, _target_pid: Option<u32>, meta: &WindowMetad
 
 fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
     haystack.to_lowercase().contains(&needle.to_lowercase())
+}
+
+fn is_frame_window(meta: &WindowMetadata) -> bool {
+    contains_case_insensitive(&meta.wm_class, "mutter-x11-frames")
 }
 
 fn read_text_property(

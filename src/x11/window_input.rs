@@ -5,11 +5,12 @@ use x11rb::{
         shape,
         xfixes::ConnectionExt as _,
         xproto::{
-            Atom, ClientMessageData, ClientMessageEvent, ConnectionExt as _, EventMask, MapState,
-            Window,
+            Atom, AtomEnum, ClientMessageData, ClientMessageEvent, ConnectionExt as _, EventMask,
+            MapState, PropMode, Window,
         },
     },
     rust_connection::RustConnection,
+    wrapper::ConnectionExt as _,
 };
 
 pub fn set_mouse_passthrough(window: u32) -> Result<()> {
@@ -37,9 +38,25 @@ pub fn apply_wallpaper_window_hints(window: u32) -> Result<()> {
     let skip_taskbar = intern_atom(&conn, b"_NET_WM_STATE_SKIP_TASKBAR")?;
     let skip_pager = intern_atom(&conn, b"_NET_WM_STATE_SKIP_PAGER")?;
     let below = intern_atom(&conn, b"_NET_WM_STATE_BELOW")?;
+    let fullscreen = intern_atom(&conn, b"_NET_WM_STATE_FULLSCREEN")?;
+    let max_vert = intern_atom(&conn, b"_NET_WM_STATE_MAXIMIZED_VERT")?;
+    let max_horz = intern_atom(&conn, b"_NET_WM_STATE_MAXIMIZED_HORZ")?;
+    let motif_wm_hints = intern_atom(&conn, b"_MOTIF_WM_HINTS")?;
+    let gtk_hide_titlebar = intern_atom(&conn, b"_GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED")?;
 
+    set_motif_decorations_disabled(&conn, window, motif_wm_hints)?;
+    conn.change_property32(
+        PropMode::REPLACE,
+        window,
+        gtk_hide_titlebar,
+        AtomEnum::CARDINAL,
+        &[1],
+    )
+    .context("failed to request hidden titlebar on maximized wallpaper window")?;
     send_state_change(&conn, root, window, net_wm_state, 1, skip_taskbar, skip_pager)?;
     send_state_change(&conn, root, window, net_wm_state, 1, below, 0)?;
+    send_state_change(&conn, root, window, net_wm_state, 1, fullscreen, 0)?;
+    send_state_change(&conn, root, window, net_wm_state, 1, max_vert, max_horz)?;
     conn.flush().context("failed to flush X11 EWMH hint requests")?;
     Ok(())
 }
@@ -96,5 +113,23 @@ fn send_state_change(
         event,
     )
     .context("failed to send _NET_WM_STATE client message")?;
+    Ok(())
+}
+
+fn set_motif_decorations_disabled(
+    conn: &RustConnection,
+    window: Window,
+    motif_wm_hints: Atom,
+) -> Result<()> {
+    // Motif hints layout: flags, functions, decorations, input_mode, status.
+    // Setting flags=2 and decorations=0 requests an undecorated top-level window.
+    conn.change_property32(
+        PropMode::REPLACE,
+        window,
+        motif_wm_hints,
+        motif_wm_hints,
+        &[2, 0, 0, 0, 0],
+    )
+    .context("failed to disable MOTIF decorations for wallpaper window")?;
     Ok(())
 }
