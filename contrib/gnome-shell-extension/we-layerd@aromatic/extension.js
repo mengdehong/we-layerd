@@ -5,6 +5,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const BUS_NAME = 'io.github.weLayerd.Gnome';
 const OBJECT_PATH = '/io/github/weLayerd/Gnome';
+const EXTENSION_RUNTIME_VERSION = 'gnome-window-bridge-v2-safe-refresh';
 const IFACE_XML = `
 <node>
   <interface name="io.github.weLayerd.Gnome">
@@ -25,6 +26,10 @@ const IFACE_XML = `
   </interface>
 </node>`;
 
+function logDebug(message) {
+    console.log(`[we-layerd][${EXTENSION_RUNTIME_VERSION}] ${message}`);
+}
+
 class ManagedWindow {
     constructor(metaWindow) {
         this._window = metaWindow;
@@ -34,15 +39,11 @@ class ManagedWindow {
         this._lowerLaterId = 0;
         this._syncing = false;
 
-        this._signals.push(metaWindow.connect_after('raised', () => this.queueRefresh()));
-        this._signals.push(metaWindow.connect('position-changed', () => this.queueRefresh()));
-        this._signals.push(metaWindow.connect('size-changed', () => this.queueRefresh()));
         this._signals.push(metaWindow.connect('notify::minimized', () => {
             if (!this._window.minimized)
                 return;
-            this.queueRefresh();
+            this.queueRefresh(100);
         }));
-        this._signals.push(metaWindow.connect('workspace-changed', () => this.queueRefresh()));
 
         this.queueRefresh();
     }
@@ -75,15 +76,6 @@ class ManagedWindow {
             this._window.unmake_above();
             this._window.stick();
             this._window.unminimize();
-
-            const frameRect = this._window.get_frame_rect?.();
-            const needsMove = !frameRect ||
-                frameRect.x !== monitor.x ||
-                frameRect.y !== monitor.y;
-
-            if (needsMove) {
-                this._window.move_frame(true, monitor.x, monitor.y);
-            }
         } finally {
             this._syncing = false;
         }
@@ -117,6 +109,7 @@ class ManagedWindow {
 
 export default class WeLayerdExtension extends Extension {
     enable() {
+        logDebug('enable()');
         this._target = null;
         this._managed = null;
         this._targetUnmanagedId = 0;
@@ -125,7 +118,7 @@ export default class WeLayerdExtension extends Extension {
         });
         this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => {
             if (this._managed)
-                this._managed.refresh();
+                this._managed.queueRefresh(100);
         });
 
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(IFACE_XML, this);
@@ -141,6 +134,7 @@ export default class WeLayerdExtension extends Extension {
     }
 
     disable() {
+        logDebug('disable()');
         this._clearManagedWindow();
 
         if (this._mapId) {
@@ -165,10 +159,11 @@ export default class WeLayerdExtension extends Extension {
     }
 
     Ping() {
-        return 'we-layerd-gnome-bridge-v1';
+        return `${EXTENSION_RUNTIME_VERSION};metadata=2`;
     }
 
     RegisterWindow(xid, pid, title, wmClass) {
+        logDebug(`RegisterWindow(xid=0x${xid.toString(16)}, pid=${pid}, title=${title ?? ''}, wmClass=${wmClass ?? ''})`);
         this._target = {
             xid,
             pid,
@@ -184,6 +179,7 @@ export default class WeLayerdExtension extends Extension {
     }
 
     UnregisterWindow(xid) {
+        logDebug(`UnregisterWindow(xid=0x${xid.toString(16)})`);
         if (!this._target || this._target.xid !== xid)
             return false;
 
@@ -199,9 +195,14 @@ export default class WeLayerdExtension extends Extension {
         if (!this._matches(metaWindow))
             return false;
 
+        const title = metaWindow.get_title?.() ?? '';
+        const pid = metaWindow.get_pid?.() ?? 0;
+        const wmClass = metaWindow.get_wm_class?.() ?? '';
+        logDebug(`adopting window(title=${title}, pid=${pid}, wmClass=${wmClass})`);
+
         const current = this._managed?._window;
         if (current === metaWindow) {
-            this._managed.refresh();
+            this._managed.queueRefresh(100);
             return true;
         }
 
