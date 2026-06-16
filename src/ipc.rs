@@ -234,7 +234,7 @@ impl Endpoint {
 fn default_endpoint() -> Result<Endpoint> {
     #[cfg(target_os = "linux")]
     {
-        return Ok(Endpoint::Abstract(abstract_socket_name()));
+        Ok(Endpoint::Abstract(abstract_socket_name()))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -333,6 +333,7 @@ fn acquire_instance_lock() -> Result<fs::File> {
 
     let file = fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)

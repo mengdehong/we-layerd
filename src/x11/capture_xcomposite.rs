@@ -336,7 +336,7 @@ fn x11_stride_for_depth(conn: &RustConnection, depth: u8, width: u16) -> Result<
 
     let scanline_pad = usize::from(format.scanline_pad.max(8));
     let row_bits = usize::from(width) * bits_per_pixel;
-    let stride_bits = ((row_bits + scanline_pad - 1) / scanline_pad) * scanline_pad;
+    let stride_bits = row_bits.div_ceil(scanline_pad) * scanline_pad;
     Ok(stride_bits / 8)
 }
 

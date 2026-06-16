@@ -273,82 +273,28 @@ pub fn build_config(
             cfg.wine.args.clear();
         }
         WallpaperType::Scene => {
-            cfg.runtime = Some(RuntimeConfig {
-                mode: RuntimeMode::WineLayerd,
-                wallpaper_type: RuntimeWallpaperType::Scene,
-                video_file: None,
-            });
-            cfg.wine.args = vec![
-                "-control".to_string(),
-                "openWallpaper".to_string(),
-                "-file".to_string(),
-                project_json.display().to_string(),
-                "-playInWindow".to_string(),
-                settings.play_in_window_title.clone(),
-                "-width".to_string(),
-                settings.width.to_string(),
-                "-height".to_string(),
-                settings.height.to_string(),
-                "-x".to_string(),
-                settings.x.to_string(),
-                "-y".to_string(),
-                settings.y.to_string(),
-            ];
-            if settings.borderless {
-                cfg.wine.args.push("-borderless".to_string());
-            }
+            apply_window_wallpaper_config(
+                &mut cfg,
+                settings,
+                project_json,
+                RuntimeWallpaperType::Scene,
+            );
         }
         WallpaperType::Web => {
-            cfg.runtime = Some(RuntimeConfig {
-                mode: RuntimeMode::WineLayerd,
-                wallpaper_type: RuntimeWallpaperType::Web,
-                video_file: None,
-            });
-            cfg.wine.args = vec![
-                "-control".to_string(),
-                "openWallpaper".to_string(),
-                "-file".to_string(),
-                project_json.display().to_string(),
-                "-playInWindow".to_string(),
-                settings.play_in_window_title.clone(),
-                "-width".to_string(),
-                settings.width.to_string(),
-                "-height".to_string(),
-                settings.height.to_string(),
-                "-x".to_string(),
-                settings.x.to_string(),
-                "-y".to_string(),
-                settings.y.to_string(),
-            ];
-            if settings.borderless {
-                cfg.wine.args.push("-borderless".to_string());
-            }
+            apply_window_wallpaper_config(
+                &mut cfg,
+                settings,
+                project_json,
+                RuntimeWallpaperType::Web,
+            );
         }
         WallpaperType::Unknown => {
-            cfg.runtime = Some(RuntimeConfig {
-                mode: RuntimeMode::WineLayerd,
-                wallpaper_type: RuntimeWallpaperType::Unknown,
-                video_file: None,
-            });
-            cfg.wine.args = vec![
-                "-control".to_string(),
-                "openWallpaper".to_string(),
-                "-file".to_string(),
-                project_json.display().to_string(),
-                "-playInWindow".to_string(),
-                settings.play_in_window_title.clone(),
-                "-width".to_string(),
-                settings.width.to_string(),
-                "-height".to_string(),
-                settings.height.to_string(),
-                "-x".to_string(),
-                settings.x.to_string(),
-                "-y".to_string(),
-                settings.y.to_string(),
-            ];
-            if settings.borderless {
-                cfg.wine.args.push("-borderless".to_string());
-            }
+            apply_window_wallpaper_config(
+                &mut cfg,
+                settings,
+                project_json,
+                RuntimeWallpaperType::Unknown,
+            );
         }
     }
 
@@ -399,6 +345,40 @@ pub fn build_config(
     }
 
     cfg
+}
+
+fn apply_window_wallpaper_config(
+    cfg: &mut AppConfig,
+    settings: &LaunchSettings,
+    project_json: &Path,
+    wallpaper_type: RuntimeWallpaperType,
+) {
+    cfg.runtime =
+        Some(RuntimeConfig { mode: RuntimeMode::WineLayerd, wallpaper_type, video_file: None });
+    cfg.wine.args = build_window_wallpaper_args(settings, project_json);
+}
+
+fn build_window_wallpaper_args(settings: &LaunchSettings, project_json: &Path) -> Vec<String> {
+    let mut args = vec![
+        "-control".to_string(),
+        "openWallpaper".to_string(),
+        "-file".to_string(),
+        project_json.display().to_string(),
+        "-playInWindow".to_string(),
+        settings.play_in_window_title.clone(),
+        "-width".to_string(),
+        settings.width.to_string(),
+        "-height".to_string(),
+        settings.height.to_string(),
+        "-x".to_string(),
+        settings.x.to_string(),
+        "-y".to_string(),
+        settings.y.to_string(),
+    ];
+    if settings.borderless {
+        args.push("-borderless".to_string());
+    }
+    args
 }
 
 fn derive_steam_root_from_path(p: &Path) -> Option<std::path::PathBuf> {

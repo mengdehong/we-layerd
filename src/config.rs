@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -43,18 +43,13 @@ pub struct GeneralConfig {
     pub disable_debug_window_input: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
+    #[default]
     Auto,
     LayerShell,
     GnomeShell,
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,18 +58,13 @@ pub struct GnomeConfig {
     pub extension_dbus_name: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScaleMode {
     Fit,
+    #[default]
     Cover,
     Stretch,
-}
-
-impl Default for ScaleMode {
-    fn default() -> Self {
-        Self::Cover
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,17 +81,12 @@ pub struct WineConfig {
     pub env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WineCommandMode {
+    #[default]
     ExeWithArgs,
     CommandOnly,
-}
-
-impl Default for WineCommandMode {
-    fn default() -> Self {
-        Self::ExeWithArgs
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,32 +113,22 @@ pub struct RuntimeConfig {
     pub video_file: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeMode {
     VideoNative,
+    #[default]
     WineLayerd,
 }
 
-impl Default for RuntimeMode {
-    fn default() -> Self {
-        Self::WineLayerd
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeWallpaperType {
     Video,
     Scene,
     Web,
+    #[default]
     Unknown,
-}
-
-impl Default for RuntimeWallpaperType {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,17 +143,12 @@ pub struct CgroupConfig {
     pub cpu_max: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CgroupMode {
+    #[default]
     Detect,
     LimitWine,
-}
-
-impl Default for CgroupMode {
-    fn default() -> Self {
-        Self::Detect
-    }
 }
 
 fn default_fps() -> u32 {
@@ -211,19 +181,6 @@ fn default_hide_debug_window() -> bool {
 
 fn default_hidden_workspace_name() -> String {
     "top".to_string()
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            gnome: GnomeConfig::default(),
-            wine: WineConfig::default(),
-            capture: CaptureConfig::default(),
-            runtime: None,
-            cgroup: CgroupConfig::default(),
-        }
-    }
 }
 
 impl Default for GeneralConfig {

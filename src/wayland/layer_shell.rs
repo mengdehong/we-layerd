@@ -618,9 +618,7 @@ fn process_control(
     running: &mut bool,
     paused: &mut bool,
 ) -> Option<RuntimeLoopExit> {
-    let Some(rx) = control_rx else {
-        return None;
-    };
+    let rx = control_rx?;
 
     loop {
         match rx.try_recv() {

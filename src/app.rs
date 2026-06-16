@@ -732,12 +732,14 @@ mod tests {
 
     #[test]
     fn hot_switch_requires_window_runtime_on_both_sides() {
-        let mut current = Config::default();
-        current.runtime = Some(RuntimeConfig {
-            mode: RuntimeMode::WineLayerd,
-            wallpaper_type: RuntimeWallpaperType::Scene,
-            video_file: None,
-        });
+        let current = Config {
+            runtime: Some(RuntimeConfig {
+                mode: RuntimeMode::WineLayerd,
+                wallpaper_type: RuntimeWallpaperType::Scene,
+                video_file: None,
+            }),
+            ..Config::default()
+        };
 
         let mut next = current.clone();
         next.runtime = Some(RuntimeConfig {
