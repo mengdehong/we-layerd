@@ -1,6 +1,7 @@
 import Gio from 'gi://Gio';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {GnomeShellOverride} from './gnomeShellOverride.js';
+import {VideoRendererController} from './videoRenderer.js';
 import {WindowManager} from './windowManager.js';
 
 const BUS_NAME = 'io.github.weLayerd.Gnome';
@@ -23,6 +24,19 @@ const IFACE_XML = `
       <arg type="u" name="xid" direction="in"/>
       <arg type="b" name="removed" direction="out"/>
     </method>
+    <method name="StartVideo">
+      <arg type="s" name="file_path" direction="in"/>
+      <arg type="b" name="accepted" direction="out"/>
+    </method>
+    <method name="StopVideo">
+      <arg type="b" name="stopped" direction="out"/>
+    </method>
+    <method name="PauseVideo">
+      <arg type="b" name="paused" direction="out"/>
+    </method>
+    <method name="ResumeVideo">
+      <arg type="b" name="resumed" direction="out"/>
+    </method>
   </interface>
 </node>`;
 
@@ -34,8 +48,13 @@ export default class WeLayerdExtension extends Extension {
     enable() {
         logDebug('enable()');
         this._target = null;
-        this._override = new GnomeShellOverride(metaWindow => this._matches(metaWindow));
-        this._windowManager = new WindowManager(metaWindow => this._matches(metaWindow));
+        this._videoRenderer = new VideoRendererController(this.path);
+        this._override = new GnomeShellOverride(
+            metaWindow => this._shouldHideWindow(metaWindow),
+            () => this._videoRenderer?.isActive() ?? false,
+            metaWindow => this._videoRenderer?.matchesWindow(metaWindow) ?? false
+        );
+        this._windowManager = new WindowManager(metaWindow => this._shouldManageWindow(metaWindow));
         this._override.enable();
         this._windowManager.enable();
 
@@ -53,6 +72,8 @@ export default class WeLayerdExtension extends Extension {
 
     disable() {
         logDebug('disable()');
+        this._videoRenderer?.stop();
+        this._videoRenderer = null;
         this._windowManager?.disable();
         this._windowManager = null;
         this._override?.disable();
@@ -72,7 +93,7 @@ export default class WeLayerdExtension extends Extension {
     }
 
     Ping() {
-        return `${EXTENSION_RUNTIME_VERSION};metadata=3`;
+        return `${EXTENSION_RUNTIME_VERSION};metadata=4`;
     }
 
     RegisterWindow(xid, pid, title, wmClass) {
@@ -84,7 +105,9 @@ export default class WeLayerdExtension extends Extension {
             wmClass: wmClass ?? '',
         };
 
+        this._videoRenderer?.stop();
         this._windowManager?.refreshMatches();
+        this._override?.reloadBackgrounds();
         return true;
     }
 
@@ -96,6 +119,46 @@ export default class WeLayerdExtension extends Extension {
         this._target = null;
         this._windowManager?.refreshMatches();
         return true;
+    }
+
+    StartVideo(filePath) {
+        logDebug(`StartVideo(filePath=${filePath ?? ''})`);
+        if (!filePath)
+            return false;
+
+        if (!this._videoRenderer?.start(filePath))
+            return false;
+
+        this._target = null;
+        this._windowManager?.refreshMatches();
+        this._override?.reloadBackgrounds();
+        return true;
+    }
+
+    StopVideo() {
+        logDebug('StopVideo()');
+        this._videoRenderer?.stop();
+        this._windowManager?.refreshMatches();
+        this._override?.reloadBackgrounds();
+        return true;
+    }
+
+    PauseVideo() {
+        logDebug('PauseVideo()');
+        return this._videoRenderer?.pause() ?? false;
+    }
+
+    ResumeVideo() {
+        logDebug('ResumeVideo()');
+        return this._videoRenderer?.resume() ?? false;
+    }
+
+    _shouldManageWindow(metaWindow) {
+        return this._matches(metaWindow) || (this._videoRenderer?.matchesWindow(metaWindow) ?? false);
+    }
+
+    _shouldHideWindow(metaWindow) {
+        return this._shouldManageWindow(metaWindow);
     }
 
     _matches(metaWindow) {

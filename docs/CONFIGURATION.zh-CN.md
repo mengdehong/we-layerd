@@ -9,6 +9,7 @@ cp config.example.toml ~/.config/we-layerd/config.toml
 - `wine.wallpaper_exe`：Wallpaper Engine 可执行文件路径。
 - `wine.args`：scene/web 模式启动参数（`openWallpaper`）。
 - `runtime`：`wine_layerd` 或 `video_native`。
+- `runtime.video_file`：当 `runtime.mode = "video_native"` 时必填。
 - 可按需调整 `capture` 匹配规则。
 
 可选 cgroup 配置：
@@ -53,6 +54,7 @@ extension_dbus_name = "io.github.weLayerd.Gnome"
 ```
 请将 [contrib/gnome-shell-extension/we-layerd@aromatic](../contrib/gnome-shell-extension/we-layerd@aromatic)
 安装到 `~/.local/share/gnome-shell/extensions/`，并在启动 `we-layerd` 前于 GNOME Extensions 中启用。
+当 `runtime.mode = "video_native"` 且后端为 GNOME 时，扩展还会启动仓库内置的 `gjs` + Gtk 4 视频渲染器，并将其 clone 到桌面背景。
 
 niri 配置示例：
 ```kdl

@@ -178,10 +178,14 @@ fn apply_xwayland_root_size(cfg: &mut Config) {
     };
 
     let mut adjusted = Vec::new();
-    if let Some((before, after)) = replace_numeric_wine_arg(&mut cfg.wine.args, "-width", root_width) {
+    if let Some((before, after)) =
+        replace_numeric_wine_arg(&mut cfg.wine.args, "-width", root_width)
+    {
         adjusted.push(format!("-width: {before} -> {after}"));
     }
-    if let Some((before, after)) = replace_numeric_wine_arg(&mut cfg.wine.args, "-height", root_height) {
+    if let Some((before, after)) =
+        replace_numeric_wine_arg(&mut cfg.wine.args, "-height", root_height)
+    {
         adjusted.push(format!("-height: {before} -> {after}"));
     }
 
@@ -195,7 +199,11 @@ fn apply_xwayland_root_size(cfg: &mut Config) {
     }
 }
 
-fn replace_numeric_wine_arg(args: &mut [String], flag: &str, replacement: u32) -> Option<(u32, u32)> {
+fn replace_numeric_wine_arg(
+    args: &mut [String],
+    flag: &str,
+    replacement: u32,
+) -> Option<(u32, u32)> {
     let index = args.iter().position(|arg| arg == flag)?;
     let value = args.get(index + 1)?.parse::<u32>().ok()?;
     let slot = args.get_mut(index + 1)?;
@@ -235,6 +243,11 @@ fn run_video_native(
     let video = video_file
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow!("runtime.video_file is required when runtime.mode=video_native"))?;
+
+    if matches!(gnome::resolve_backend(cfg), ResolvedBackend::GnomeShell) {
+        info!(video, "starting GNOME video mode via shell extension");
+        return gnome::run_video_bridge(cfg, Path::new(video), control_rx);
+    }
 
     info!(video, "starting native video mode via ffmpeg + wgpu");
     wayland::layer_shell::run_video_background_surface(

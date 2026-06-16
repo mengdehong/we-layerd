@@ -4,7 +4,7 @@
 
 ## 功能
 - Wine 模式：启动 `wallpaper64.exe`，捕获 XWayland/X11 画面，渲染到 Wayland layer-shell。
-- GNOME 模式：通过 GNOME Shell 扩展注册 Wallpaper Engine 的 XWayland 窗口，并将真实窗口固定在桌面底层。
+- GNOME 模式：通过 GNOME Shell 扩展注册 Wallpaper Engine 的 XWayland 窗口，或直接通过扩展桥接播放原生视频壁纸。
 - 桌面环境支持：KDE Plasma 与 GNOME Shell。
 - 原生视频模式：使用 FFmpeg + `wgpu` 播放视频壁纸。
 - Windows 启动器模式：支持 Wine / Proton（自动扫描 Steam 下 Proton 版本）。
@@ -18,12 +18,13 @@
 - 运行依赖：
   - 已支持的桌面环境：
     - KDE Plasma（Wayland 下通过 layer-shell 模式）。
-    - GNOME Shell 45+（通过仓库内置的扩展桥接）。
+    - GNOME Shell 45+（通过仓库内置的扩展桥接 scene/web 与原生视频壁纸）。
   - 支持 `zwlr_layer_shell_v1` 的 Wayland 合成器（niri / Hyprland / sway 等）。
   - XWayland/X11 与 XComposite 扩展（Wine 窗口捕获需要）。
   - Vulkan/GL 运行环境（`wgpu`）。
   - FFmpeg 库与头文件（`libavformat`、`libavcodec`、`libavutil`、`libswscale`）。
   - Wine 与 Wallpaper Engine 可执行文件。
+  - `gjs` 与 Gtk 4（GNOME 原生视频模式需要）。
   - cgroup v2（仅在启用 cgroup 功能时需要）。
 
 Arch Linux 依赖示例：

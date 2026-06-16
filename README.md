@@ -6,7 +6,7 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 
 ## Features
 - Wine mode: launch `wallpaper64.exe`, capture XWayland/X11 output, render to Wayland layer-shell.
-- GNOME mode: register the Wallpaper Engine XWayland window with a GNOME Shell extension and keep the real window pinned at the desktop bottom layer.
+- GNOME mode: register the Wallpaper Engine XWayland window with a GNOME Shell extension, or render native video wallpaper through the bundled GNOME bridge.
 - Desktop environment support: KDE Plasma and GNOME Shell.
 - Native video mode: FFmpeg + `wgpu` pipeline.
 - Windows launcher mode: Wine / Proton (Proton auto-discovery from Steam paths).
@@ -20,9 +20,10 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 - `pkg-config` (`pkgconf`) for native library detection during build.
 - Supported desktop environments:
   - KDE Plasma (via layer-shell mode on Wayland).
-  - GNOME Shell 45+ (via the bundled GNOME Shell extension bridge).
+  - GNOME Shell 45+ (via the bundled GNOME Shell extension bridge for Wine scenes/web and native video).
 - Wayland compositor with `zwlr_layer_shell_v1` for layer-shell mode (target: niri; should also work on Hyprland/sway).
 - GNOME Shell 45+ for GNOME window-bridge mode, plus the bundled extension from [contrib/gnome-shell-extension](./contrib/gnome-shell-extension).
+- `gjs` with Gtk 4 support for GNOME native video mode.
 - XWayland/X11 for Wine render window capture.
 - X11 Composite extension.
 - Vulkan/GL stack usable by `wgpu`.

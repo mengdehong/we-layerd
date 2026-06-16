@@ -1,4 +1,4 @@
-use std::{env, sync::mpsc, time::Duration};
+use std::{env, path::Path, sync::mpsc, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use tracing::{info, warn};
@@ -108,6 +108,42 @@ pub fn run_window_bridge(
     Ok(())
 }
 
+pub fn run_video_bridge(
+    cfg: &Config,
+    video_file: &Path,
+    control_rx: &mpsc::Receiver<ControlCommand>,
+) -> Result<()> {
+    let client = GnomeShellClient::connect(&cfg.gnome.extension_dbus_name)?;
+    let version = client.ping()?;
+    info!(version, "connected to GNOME wallpaper extension");
+
+    client.start_video(video_file)?;
+    info!(file = %video_file.display(), "started GNOME video wallpaper");
+
+    loop {
+        match control_rx.try_recv() {
+            Ok(ControlCommand::Stop) => break,
+            Ok(ControlCommand::Pause) => {
+                client.pause_video()?;
+            }
+            Ok(ControlCommand::Resume) => {
+                client.resume_video()?;
+            }
+            Ok(ControlCommand::Reload) => {
+                client.start_video(video_file)?;
+            }
+            Ok(ControlCommand::HideWindow) | Ok(ControlCommand::ShowWindow) => {}
+            Err(mpsc::TryRecvError::Empty) => {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+    }
+
+    client.stop_video()?;
+    Ok(())
+}
+
 pub fn doctor(cfg: &Config) -> Result<()> {
     if !is_gnome_session() {
         return Ok(());
@@ -189,6 +225,42 @@ impl GnomeShellClient {
             .proxy()?
             .call("UnregisterWindow", &(xid,))
             .context("failed to unregister window from GNOME extension")?;
+        Ok(())
+    }
+
+    fn start_video(&self, video_file: &Path) -> Result<()> {
+        let accepted: bool = self
+            .proxy()?
+            .call("StartVideo", &(video_file.display().to_string(),))
+            .context("failed to start video wallpaper via GNOME extension")?;
+        if accepted {
+            Ok(())
+        } else {
+            Err(anyhow!("GNOME extension rejected the requested video wallpaper"))
+        }
+    }
+
+    fn stop_video(&self) -> Result<()> {
+        let _: bool = self
+            .proxy()?
+            .call("StopVideo", &())
+            .context("failed to stop video wallpaper via GNOME extension")?;
+        Ok(())
+    }
+
+    fn pause_video(&self) -> Result<()> {
+        let _: bool = self
+            .proxy()?
+            .call("PauseVideo", &())
+            .context("failed to pause video wallpaper via GNOME extension")?;
+        Ok(())
+    }
+
+    fn resume_video(&self) -> Result<()> {
+        let _: bool = self
+            .proxy()?
+            .call("ResumeVideo", &())
+            .context("failed to resume video wallpaper via GNOME extension")?;
         Ok(())
     }
 

@@ -1,8 +1,8 @@
 {
   "uuid": "we-layerd@aromatic",
   "name": "we-layerd",
-  "description": "Pins a Wallpaper Engine XWayland window to the GNOME desktop background.",
+  "description": "Pins Wallpaper Engine windows or native video renderers to the GNOME desktop background.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/aromatic/we-layerd",
-  "version": 3
+  "version": 4
 }

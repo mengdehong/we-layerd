@@ -9,6 +9,7 @@ Minimal required fields:
 - `wine.wallpaper_exe` (usually `~/.local/share/Steam/steamapps/common/wallpaper_engine/wallpaper64.exe`).
 - `wine.args` for scene/web mode launch (`openWallpaper` args).
 - `runtime` block (`wine_layerd` or `video_native`).
+- `runtime.video_file` when `runtime.mode = "video_native"`.
 - Optionally tune `capture` match rules.
 
 Optional cgroup block:
@@ -54,6 +55,7 @@ extension_dbus_name = "io.github.weLayerd.Gnome"
 ```
 Install the extension directory [contrib/gnome-shell-extension/we-layerd@aromatic](../contrib/gnome-shell-extension/we-layerd@aromatic)
 into `~/.local/share/gnome-shell/extensions/`, then enable it in GNOME Extensions before launching `we-layerd`.
+For `runtime.mode = "video_native"` on GNOME, the extension also launches a bundled `gjs` + Gtk 4 renderer process and clones it into the desktop background.
 
 Example niri config:
 ```kdl
