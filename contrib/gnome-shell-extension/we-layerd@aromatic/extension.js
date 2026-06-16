@@ -31,41 +31,76 @@ class ManagedWindow {
         this._signals = [];
         this._disposed = false;
         this._refreshLaterId = 0;
+        this._lowerLaterId = 0;
+        this._syncing = false;
 
-        this._signals.push(metaWindow.connect_after('raised', () => this.refresh()));
-        this._signals.push(metaWindow.connect('position-changed', () => this.refresh()));
-        this._signals.push(metaWindow.connect('size-changed', () => this.refresh()));
+        this._signals.push(metaWindow.connect_after('raised', () => this.queueRefresh()));
+        this._signals.push(metaWindow.connect('position-changed', () => this.queueRefresh()));
+        this._signals.push(metaWindow.connect('size-changed', () => this.queueRefresh()));
         this._signals.push(metaWindow.connect('notify::minimized', () => {
             if (!this._window.minimized)
                 return;
-            this._window.unminimize();
-            this.refresh();
+            this.queueRefresh();
         }));
-        this._signals.push(metaWindow.connect('workspace-changed', () => this.refresh()));
+        this._signals.push(metaWindow.connect('workspace-changed', () => this.queueRefresh()));
 
-        this.refresh();
+        this.queueRefresh();
+    }
+
+    queueRefresh(delayMs = 0) {
+        if (this._disposed || !this._window || this._refreshLaterId)
+            return;
+
+        this._refreshLaterId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
+            this._refreshLaterId = 0;
+            this.refresh();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     refresh() {
-        if (this._disposed || !this._window)
+        if (this._disposed || !this._window || this._syncing)
             return;
+
+        this._syncing = true;
 
         const monitorIndex = this._window.get_monitor();
         const monitor = Main.layoutManager.monitors[monitorIndex] ?? Main.layoutManager.primaryMonitor;
-        if (!monitor)
+        if (!monitor) {
+            this._syncing = false;
             return;
+        }
 
-        this._window.unmake_above();
-        this._window.stick();
-        this._window.unminimize();
-        this._window.move_resize_frame(true, monitor.x, monitor.y, monitor.width, monitor.height);
-        this._window.lower();
+        try {
+            this._window.unmake_above();
+            this._window.stick();
+            this._window.unminimize();
 
-        if (this._refreshLaterId)
-            GLib.source_remove(this._refreshLaterId);
-        this._refreshLaterId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-            this._refreshLaterId = 0;
-            if (!this._disposed && this._window)
+            const frameRect = this._window.get_frame_rect?.();
+            const needsMove = !frameRect ||
+                frameRect.x !== monitor.x ||
+                frameRect.y !== monitor.y ||
+                frameRect.width !== monitor.width ||
+                frameRect.height !== monitor.height;
+
+            if (needsMove) {
+                this._window.move_resize_frame(
+                    true,
+                    monitor.x,
+                    monitor.y,
+                    monitor.width,
+                    monitor.height
+                );
+            }
+        } finally {
+            this._syncing = false;
+        }
+
+        if (this._lowerLaterId)
+            GLib.source_remove(this._lowerLaterId);
+        this._lowerLaterId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+            this._lowerLaterId = 0;
+            if (!this._disposed && this._window && !this._syncing)
                 this._window.lower();
             return GLib.SOURCE_REMOVE;
         });
@@ -76,6 +111,10 @@ class ManagedWindow {
         if (this._refreshLaterId) {
             GLib.source_remove(this._refreshLaterId);
             this._refreshLaterId = 0;
+        }
+        if (this._lowerLaterId) {
+            GLib.source_remove(this._lowerLaterId);
+            this._lowerLaterId = 0;
         }
         for (const signalId of this._signals)
             this._window.disconnect(signalId);
@@ -179,7 +218,6 @@ export default class WeLayerdExtension extends Extension {
         this._targetUnmanagedId = metaWindow.connect('unmanaged', () => {
             this._clearManagedWindow();
         });
-        this._managed.refresh();
         return true;
     }
 
