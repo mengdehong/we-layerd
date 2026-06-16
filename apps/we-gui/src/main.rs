@@ -489,7 +489,8 @@ impl App {
             steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
         let mut launch_settings =
             load_launch_settings(&config_path).unwrap_or_else(|_| LaunchSettings::default());
-        let install_state = steam::detect_wallpaper_engine_install_state();
+        let install_state =
+            steam::detect_wallpaper_engine_install_state(launch_settings.wallpaper_exe.clone());
         let install_notice = match &install_state {
             WallpaperEngineInstallState::NotInstalled => Some(
                 "Wallpaper Engine is not installed. Please install it, or choose paths in Settings."
@@ -506,9 +507,11 @@ impl App {
                 None
             }
         };
-        let workshop_path = steam::discover_workshop_wallpaper_root()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
+        if launch_settings.workshop_path.trim().is_empty() {
+            launch_settings.workshop_path = steam::discover_workshop_wallpaper_root()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+        }
         let supported_resolutions = detect_supported_resolutions();
         let wine_commands = steam::discover_wine_commands()
             .into_iter()
@@ -532,7 +535,7 @@ impl App {
         let ui_settings = UiSettings {
             wallpaper_exe: launch_settings.wallpaper_exe.clone(),
             executable_variant: infer_executable_variant(&launch_settings.wallpaper_exe),
-            workshop_path,
+            workshop_path: launch_settings.workshop_path.clone(),
             launcher_mode: match launch_settings.launcher {
                 WindowsLauncher::Wine => LauncherModeOption::Wine,
                 WindowsLauncher::Proton => LauncherModeOption::Proton,

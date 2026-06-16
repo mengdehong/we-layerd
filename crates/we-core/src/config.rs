@@ -52,6 +52,7 @@ pub struct WineConfig {
     #[serde(default)]
     pub command_mode: WineCommandMode,
     pub wallpaper_exe: String,
+    pub workshop_path: String,
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -122,6 +123,7 @@ pub enum CgroupMode {
 #[derive(Debug, Clone)]
 pub struct LaunchSettings {
     pub wallpaper_exe: String,
+    pub workshop_path: String,
     pub launcher: WindowsLauncher,
     pub wine_command: String,
     pub proton_path: Option<String>,
@@ -147,6 +149,7 @@ impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
             wallpaper_exe: String::new(),
+            workshop_path: String::new(),
             launcher: WindowsLauncher::Wine,
             wine_command: "wine".to_string(),
             proton_path: None,
@@ -217,6 +220,7 @@ impl Default for AppConfig {
                 command: "wine".to_string(),
                 command_mode: WineCommandMode::ExeWithArgs,
                 wallpaper_exe: String::new(),
+                workshop_path: String::new(),
                 args: Vec::new(),
                 env: BTreeMap::new(),
             },
@@ -247,6 +251,7 @@ pub fn build_config(
     cfg.wine.command = settings.wine_command.clone();
     cfg.wine.command_mode = WineCommandMode::ExeWithArgs;
     cfg.wine.wallpaper_exe = settings.wallpaper_exe.clone();
+    cfg.wine.workshop_path = settings.workshop_path.clone();
     cfg.wine.env.clear();
     cfg.capture.wm_class_contains = settings.wm_class_contains.clone();
     cfg.capture.title_contains = settings.play_in_window_title.clone();
@@ -374,9 +379,13 @@ pub fn build_config(
                     "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
                     steam_root.display().to_string(),
                 );
+            }
+            if let Some(wallpaper_root) =
+                derive_steam_root_from_proton_path(exe_path.to_str().unwrap())
+            {
                 cfg.wine.env.insert(
                     "STEAM_COMPAT_DATA_PATH".to_string(),
-                    steam_root
+                    wallpaper_root
                         .join("steamapps")
                         .join("compatdata")
                         .join(WALLPAPER_ENGINE_APP_ID.to_string())
@@ -427,7 +436,6 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     let cfg: AppConfig =
         toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
     let mut settings = LaunchSettings::default();
-
     settings.fps_limit = cfg.general.fps_limit;
     settings.show_fps = cfg.general.show_fps;
     settings.hide_debug_window = cfg.general.hide_debug_window;
@@ -443,6 +451,8 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     settings.cgroup_cpu_max = cfg.cgroup.cpu_max;
 
     settings.wallpaper_exe = cfg.wine.wallpaper_exe;
+    settings.workshop_path = cfg.wine.workshop_path;
+
     match cfg.wine.command_mode {
         WineCommandMode::ExeWithArgs => {
             settings.launcher = WindowsLauncher::Wine;
