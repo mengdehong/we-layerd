@@ -298,9 +298,12 @@ pub fn run_single_background_surface(
                                         match window_input::restore_if_minimized(window) {
                                             Ok(true) => {
                                                 info!(output = %output.name, window, "restored minimized X11 debug window");
-                                                let _ = window_input::apply_wallpaper_window_hints(window);
+                                                let _ = window_input::apply_wallpaper_window_hints(
+                                                    window,
+                                                );
                                                 if run_cfg.disable_debug_window_input {
-                                                    let _ = window_input::set_mouse_passthrough(window);
+                                                    let _ =
+                                                        window_input::set_mouse_passthrough(window);
                                                 }
                                             }
                                             Ok(false) => {}
@@ -336,7 +339,11 @@ pub fn run_single_background_surface(
                                                 if output.capture_window != Some(found.window) {
                                                     output.capture_window = Some(found.window);
                                                     output.capturer = None;
-                                                    if let Err(err) = window_input::apply_wallpaper_window_hints(found.window) {
+                                                    if let Err(err) =
+                                                        window_input::apply_wallpaper_window_hints(
+                                                            found.window,
+                                                        )
+                                                    {
                                                         warn!(
                                                             error = %err,
                                                             output = %output.name,
@@ -346,7 +353,9 @@ pub fn run_single_background_surface(
                                                     }
                                                     if run_cfg.disable_debug_window_input {
                                                         if let Err(err) =
-                                                            window_input::set_mouse_passthrough(found.window)
+                                                            window_input::set_mouse_passthrough(
+                                                                found.window,
+                                                            )
                                                         {
                                                             warn!(
                                                                 error = %err,

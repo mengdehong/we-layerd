@@ -458,8 +458,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     if let Some(width) = arg_value(&cfg.wine.args, "-width").and_then(|v| v.parse::<u32>().ok()) {
         settings.width = width.max(1);
     }
-    if let Some(height) = arg_value(&cfg.wine.args, "-height").and_then(|v| v.parse::<u32>().ok())
-    {
+    if let Some(height) = arg_value(&cfg.wine.args, "-height").and_then(|v| v.parse::<u32>().ok()) {
         settings.height = height.max(1);
     }
     if let Some(x) = arg_value(&cfg.wine.args, "-x").and_then(|v| v.parse::<i32>().ok()) {

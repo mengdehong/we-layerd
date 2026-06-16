@@ -322,9 +322,7 @@ fn ensure_kdotool_available() -> Result<()> {
     if output.status.success() {
         Ok(())
     } else {
-        Err(anyhow!(
-            "kdotool is required for KDE window hide/show logic; install it first"
-        ))
+        Err(anyhow!("kdotool is required for KDE window hide/show logic; install it first"))
     }
 }
 

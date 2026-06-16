@@ -16,7 +16,10 @@ use settings_panel::{
     ResolutionOption, UiSettings,
 };
 use we_core::{
-    config::{build_config, load_launch_settings, save_config, CgroupMode, LaunchSettings, WindowsLauncher},
+    config::{
+        build_config, load_launch_settings, save_config, CgroupMode, LaunchSettings,
+        WindowsLauncher,
+    },
     steam::{self, WallpaperEngineInstallState},
     wallpaper::{self, WallpaperEntry, WallpaperType},
 };

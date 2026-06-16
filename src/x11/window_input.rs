@@ -14,8 +14,8 @@ use x11rb::{
 };
 
 pub fn set_mouse_passthrough(window: u32) -> Result<()> {
-    let (conn, _) =
-        RustConnection::connect(None).context("failed to connect to X11 display for input setup")?;
+    let (conn, _) = RustConnection::connect(None)
+        .context("failed to connect to X11 display for input setup")?;
 
     let _ = conn
         .xfixes_query_version(5, 0)
@@ -30,8 +30,8 @@ pub fn set_mouse_passthrough(window: u32) -> Result<()> {
 }
 
 pub fn current_root_size() -> Result<(u32, u32)> {
-    let (conn, screen_num) =
-        RustConnection::connect(None).context("failed to connect to X11 display for root size query")?;
+    let (conn, screen_num) = RustConnection::connect(None)
+        .context("failed to connect to X11 display for root size query")?;
     let screen = &conn.setup().roots[screen_num];
     Ok((u32::from(screen.width_in_pixels), u32::from(screen.height_in_pixels)))
 }
@@ -52,14 +52,8 @@ pub fn apply_wallpaper_window_hints(window: u32) -> Result<()> {
     let gtk_hide_titlebar = intern_atom(&conn, b"_GTK_HIDE_TITLEBAR_WHEN_MAXIMIZED")?;
 
     set_motif_decorations_disabled(&conn, window, motif_wm_hints)?;
-    conn.change_property32(
-        PropMode::REPLACE,
-        window,
-        gtk_hide_titlebar,
-        AtomEnum::CARDINAL,
-        &[1],
-    )
-    .context("failed to request hidden titlebar on maximized wallpaper window")?;
+    conn.change_property32(PropMode::REPLACE, window, gtk_hide_titlebar, AtomEnum::CARDINAL, &[1])
+        .context("failed to request hidden titlebar on maximized wallpaper window")?;
     send_state_change(&conn, root, window, net_wm_state, 1, skip_taskbar, skip_pager)?;
     send_state_change(&conn, root, window, net_wm_state, 1, below, 0)?;
     send_state_change(&conn, root, window, net_wm_state, 1, fullscreen, 0)?;

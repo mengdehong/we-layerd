@@ -268,9 +268,9 @@ fn maybe_disable_wine_x11_window_decorations(config: &WineConfig) -> Result<()> 
         cmd.envs(config.env.iter());
     }
 
-    let output = cmd
-        .output()
-        .with_context(|| format!("failed to run '{}' to disable Wine X11 decorations", config.command))?;
+    let output = cmd.output().with_context(|| {
+        format!("failed to run '{}' to disable Wine X11 decorations", config.command)
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
