@@ -4,5 +4,5 @@
   "description": "Pins a Wallpaper Engine XWayland window to the GNOME desktop background.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/aromatic/we-layerd",
-  "version": 2
+  "version": 3
 }

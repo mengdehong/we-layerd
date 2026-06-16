@@ -1,11 +1,11 @@
 import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
-import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {GnomeShellOverride} from './gnomeShellOverride.js';
+import {WindowManager} from './windowManager.js';
 
 const BUS_NAME = 'io.github.weLayerd.Gnome';
 const OBJECT_PATH = '/io/github/weLayerd/Gnome';
-const EXTENSION_RUNTIME_VERSION = 'gnome-window-bridge-v2-safe-refresh';
+const EXTENSION_RUNTIME_VERSION = 'gnome-window-bridge-v3-hanabi-port';
 const IFACE_XML = `
 <node>
   <interface name="io.github.weLayerd.Gnome">
@@ -30,96 +30,14 @@ function logDebug(message) {
     console.log(`[we-layerd][${EXTENSION_RUNTIME_VERSION}] ${message}`);
 }
 
-class ManagedWindow {
-    constructor(metaWindow) {
-        this._window = metaWindow;
-        this._signals = [];
-        this._disposed = false;
-        this._refreshLaterId = 0;
-        this._lowerLaterId = 0;
-        this._syncing = false;
-
-        this._signals.push(metaWindow.connect('notify::minimized', () => {
-            if (!this._window.minimized)
-                return;
-            this.queueRefresh(100);
-        }));
-
-        this.queueRefresh();
-    }
-
-    queueRefresh(delayMs = 0) {
-        if (this._disposed || !this._window || this._refreshLaterId)
-            return;
-
-        this._refreshLaterId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
-            this._refreshLaterId = 0;
-            this.refresh();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    refresh() {
-        if (this._disposed || !this._window || this._syncing)
-            return;
-
-        this._syncing = true;
-
-        const monitorIndex = this._window.get_monitor();
-        const monitor = Main.layoutManager.monitors[monitorIndex] ?? Main.layoutManager.primaryMonitor;
-        if (!monitor) {
-            this._syncing = false;
-            return;
-        }
-
-        try {
-            this._window.unmake_above();
-            this._window.stick();
-            this._window.unminimize();
-        } finally {
-            this._syncing = false;
-        }
-
-        if (this._lowerLaterId)
-            GLib.source_remove(this._lowerLaterId);
-        this._lowerLaterId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-            this._lowerLaterId = 0;
-            if (!this._disposed && this._window && !this._syncing)
-                this._window.lower();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    destroy() {
-        this._disposed = true;
-        if (this._refreshLaterId) {
-            GLib.source_remove(this._refreshLaterId);
-            this._refreshLaterId = 0;
-        }
-        if (this._lowerLaterId) {
-            GLib.source_remove(this._lowerLaterId);
-            this._lowerLaterId = 0;
-        }
-        for (const signalId of this._signals)
-            this._window.disconnect(signalId);
-        this._signals = [];
-        this._window = null;
-    }
-}
-
 export default class WeLayerdExtension extends Extension {
     enable() {
         logDebug('enable()');
         this._target = null;
-        this._managed = null;
-        this._targetUnmanagedId = 0;
-        this._mapId = global.window_manager.connect_after('map', (_wm, actor) => {
-            this._tryAdopt(actor.get_meta_window());
-        });
-        this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => {
-            if (this._managed)
-                this._managed.queueRefresh(100);
-        });
+        this._override = new GnomeShellOverride(metaWindow => this._matches(metaWindow));
+        this._windowManager = new WindowManager(metaWindow => this._matches(metaWindow));
+        this._override.enable();
+        this._windowManager.enable();
 
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(IFACE_XML, this);
         this._dbusConnection = Gio.bus_get_sync(Gio.BusType.SESSION, null);
@@ -135,16 +53,11 @@ export default class WeLayerdExtension extends Extension {
 
     disable() {
         logDebug('disable()');
-        this._clearManagedWindow();
+        this._windowManager?.disable();
+        this._windowManager = null;
+        this._override?.disable();
+        this._override = null;
 
-        if (this._mapId) {
-            global.window_manager.disconnect(this._mapId);
-            this._mapId = 0;
-        }
-        if (this._monitorsChangedId) {
-            Main.layoutManager.disconnect(this._monitorsChangedId);
-            this._monitorsChangedId = 0;
-        }
         if (this._dbusImpl) {
             this._dbusImpl.unexport();
             this._dbusImpl = null;
@@ -159,7 +72,7 @@ export default class WeLayerdExtension extends Extension {
     }
 
     Ping() {
-        return `${EXTENSION_RUNTIME_VERSION};metadata=2`;
+        return `${EXTENSION_RUNTIME_VERSION};metadata=3`;
     }
 
     RegisterWindow(xid, pid, title, wmClass) {
@@ -171,10 +84,7 @@ export default class WeLayerdExtension extends Extension {
             wmClass: wmClass ?? '',
         };
 
-        for (const actor of global.get_window_actors()) {
-            if (this._tryAdopt(actor.get_meta_window()))
-                return true;
-        }
+        this._windowManager?.refreshMatches();
         return true;
     }
 
@@ -183,38 +93,15 @@ export default class WeLayerdExtension extends Extension {
         if (!this._target || this._target.xid !== xid)
             return false;
 
-        this._clearManagedWindow();
         this._target = null;
-        return true;
-    }
-
-    _tryAdopt(metaWindow) {
-        if (!metaWindow || !this._target)
-            return false;
-
-        if (!this._matches(metaWindow))
-            return false;
-
-        const title = metaWindow.get_title?.() ?? '';
-        const pid = metaWindow.get_pid?.() ?? 0;
-        const wmClass = metaWindow.get_wm_class?.() ?? '';
-        logDebug(`adopting window(title=${title}, pid=${pid}, wmClass=${wmClass})`);
-
-        const current = this._managed?._window;
-        if (current === metaWindow) {
-            this._managed.queueRefresh(100);
-            return true;
-        }
-
-        this._clearManagedWindow();
-        this._managed = new ManagedWindow(metaWindow);
-        this._targetUnmanagedId = metaWindow.connect('unmanaged', () => {
-            this._clearManagedWindow();
-        });
+        this._windowManager?.refreshMatches();
         return true;
     }
 
     _matches(metaWindow) {
+        if (!metaWindow || !this._target)
+            return false;
+
         const pid = metaWindow.get_pid?.() ?? 0;
         const title = metaWindow.get_title?.() ?? '';
         const wmClass = metaWindow.get_wm_class?.() ?? '';
@@ -233,16 +120,5 @@ export default class WeLayerdExtension extends Extension {
         }
 
         return false;
-    }
-
-    _clearManagedWindow() {
-        if (this._targetUnmanagedId && this._managed?._window) {
-            this._managed._window.disconnect(this._targetUnmanagedId);
-        }
-        this._targetUnmanagedId = 0;
-        if (this._managed) {
-            this._managed.destroy();
-            this._managed = null;
-        }
     }
 }
