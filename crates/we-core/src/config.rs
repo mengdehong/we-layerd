@@ -52,6 +52,7 @@ pub struct WineConfig {
     #[serde(default)]
     pub command_mode: WineCommandMode,
     pub wallpaper_exe: String,
+    #[serde(default)]
     pub workshop_path: String,
     pub args: Vec<String>,
     #[serde(default)]
@@ -374,14 +375,15 @@ pub fn build_config(
             ];
             proton_args.extend(cfg.wine.args.clone());
             cfg.wine.args = proton_args;
-            if let Some(steam_root) = derive_steam_root_from_proton_path(proton) {
+            let proton_steam_root = derive_steam_root_from_path(Path::new(proton));
+            if let Some(steam_root) = proton_steam_root.as_ref() {
                 cfg.wine.env.insert(
                     "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
                     steam_root.display().to_string(),
                 );
             }
             if let Some(wallpaper_root) =
-                derive_steam_root_from_proton_path(exe_path.to_str().unwrap())
+                derive_steam_root_from_path(exe_path).or(proton_steam_root)
             {
                 cfg.wine.env.insert(
                     "STEAM_COMPAT_DATA_PATH".to_string(),
@@ -399,8 +401,7 @@ pub fn build_config(
     cfg
 }
 
-fn derive_steam_root_from_proton_path(proton_path: &str) -> Option<std::path::PathBuf> {
-    let p = Path::new(proton_path);
+fn derive_steam_root_from_path(p: &Path) -> Option<std::path::PathBuf> {
     let parent = p.parent()?;
     let parent_name = parent.file_name()?.to_str()?;
     if parent_name.is_empty() {
@@ -485,4 +486,101 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
 fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
     let idx = args.iter().position(|arg| arg == key)?;
     args.get(idx + 1).map(String::as_str)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{build_config, load_launch_settings, LaunchSettings, WindowsLauncher};
+    use crate::wallpaper::WallpaperType;
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("we-layerd-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn load_launch_settings_accepts_legacy_config_without_workshop_path() {
+        let path = unique_temp_path("legacy-config.toml");
+        let toml = r#"
+[general]
+fps_limit = 30
+restart_wine_on_exit = true
+refind_window_on_capture_error = true
+show_fps = false
+fps_report_interval_secs = 1
+scale_mode = "cover"
+hide_debug_window = true
+hidden_workspace_name = "top"
+disable_debug_window_input = false
+
+[wine]
+command = "wine"
+command_mode = "exe_with_args"
+wallpaper_exe = "/tmp/wallpaper64.exe"
+args = ["-playInWindow", "WE-DEBUG-WINDOW"]
+
+[capture]
+wm_class_contains = "wallpaper64"
+title_contains = "WE-DEBUG-WINDOW"
+
+[cgroup]
+enabled = false
+mode = "detect"
+"#;
+
+        fs::write(&path, toml).expect("failed to write temp config");
+
+        let settings = load_launch_settings(&path).expect("legacy config should load");
+        assert_eq!(settings.wallpaper_exe, "/tmp/wallpaper64.exe");
+        assert_eq!(settings.workshop_path, "");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn proton_mode_falls_back_to_proton_root_for_compat_data_path() {
+        let mut settings = LaunchSettings::default();
+        settings.launcher = WindowsLauncher::Proton;
+        settings.proton_path = Some("/steam-root/steamapps/common/Proton 9/proton".to_string());
+        settings.wallpaper_exe = "/opt/custom/wallpaper32.exe".to_string();
+        settings.workshop_path = "/tmp/workshop".to_string();
+
+        let cfg =
+            build_config(&settings, WallpaperType::Scene, Path::new("/tmp/project.json"), None);
+
+        assert_eq!(
+            cfg.wine.env.get("STEAM_COMPAT_CLIENT_INSTALL_PATH").map(String::as_str),
+            Some("/steam-root")
+        );
+        assert_eq!(
+            cfg.wine.env.get("STEAM_COMPAT_DATA_PATH").map(String::as_str),
+            Some("/steam-root/steamapps/compatdata/431960")
+        );
+    }
+
+    #[test]
+    fn proton_mode_prefers_wallpaper_exe_root_for_compat_data_path() {
+        let mut settings = LaunchSettings::default();
+        settings.launcher = WindowsLauncher::Proton;
+        settings.proton_path = Some("/steam-root/steamapps/common/Proton 9/proton".to_string());
+        settings.wallpaper_exe =
+            "/other-steam-root/steamapps/common/wallpaper_engine/wallpaper64.exe".to_string();
+
+        let cfg =
+            build_config(&settings, WallpaperType::Scene, Path::new("/tmp/project.json"), None);
+
+        assert_eq!(
+            cfg.wine.env.get("STEAM_COMPAT_DATA_PATH").map(String::as_str),
+            Some("/other-steam-root/steamapps/compatdata/431960")
+        );
+    }
 }

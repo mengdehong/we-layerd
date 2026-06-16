@@ -133,6 +133,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
+            persist_current_config(app);
+
             if can_hot_switch(app.selected_type) && try_switch_runtime(&app.config_path) {
                 return Task::none();
             }
@@ -181,6 +183,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::WorkshopPathChanged(value) => {
             app.ui_settings.workshop_path = value.clone();
+            sync_launch_settings(app);
             if Path::new(&value).is_dir() {
                 return Task::perform(
                     scan_wallpapers_from(app.ui_settings.workshop_path.clone()),
@@ -490,7 +493,7 @@ impl App {
         let mut launch_settings =
             load_launch_settings(&config_path).unwrap_or_else(|_| LaunchSettings::default());
         let install_state =
-            steam::detect_wallpaper_engine_install_state(launch_settings.wallpaper_exe.clone());
+            steam::detect_wallpaper_engine_install_state(&launch_settings.wallpaper_exe);
         let install_notice = match &install_state {
             WallpaperEngineInstallState::NotInstalled => Some(
                 "Wallpaper Engine is not installed. Please install it, or choose paths in Settings."
@@ -690,40 +693,44 @@ fn make_wallpaper_card<'a>(
     button(frame).on_press(Message::SelectWallpaper(index)).style(image_card_button_style).into()
 }
 
-fn sync_launch_settings(app: &mut App) {
-    app.launch_settings.wallpaper_exe = app.ui_settings.wallpaper_exe.clone();
-    app.launch_settings.launcher = match app.ui_settings.launcher_mode {
+fn sync_launch_settings_from_ui(ui_settings: &UiSettings, launch_settings: &mut LaunchSettings) {
+    launch_settings.wallpaper_exe = ui_settings.wallpaper_exe.clone();
+    launch_settings.workshop_path = ui_settings.workshop_path.clone();
+    launch_settings.launcher = match ui_settings.launcher_mode {
         LauncherModeOption::Wine => WindowsLauncher::Wine,
         LauncherModeOption::Proton => WindowsLauncher::Proton,
     };
-    app.launch_settings.wine_command = app.ui_settings.wine_command.clone();
-    app.launch_settings.proton_path = non_empty_trimmed(&app.ui_settings.proton_path);
-    app.launch_settings.show_fps = app.ui_settings.show_fps;
-    app.launch_settings.borderless = app.ui_settings.borderless;
-    app.launch_settings.play_in_window_title = "WE-DEBUG-WINDOW".to_string();
-    app.launch_settings.wm_class_contains =
-        infer_wm_class(app.ui_settings.launcher_mode, app.ui_settings.executable_variant)
-            .to_string();
-    app.launch_settings.x = 0;
-    app.launch_settings.y = 0;
+    launch_settings.wine_command = ui_settings.wine_command.clone();
+    launch_settings.proton_path = non_empty_trimmed(&ui_settings.proton_path);
+    launch_settings.show_fps = ui_settings.show_fps;
+    launch_settings.borderless = ui_settings.borderless;
+    launch_settings.play_in_window_title = "WE-DEBUG-WINDOW".to_string();
+    launch_settings.wm_class_contains =
+        infer_wm_class(ui_settings.launcher_mode, ui_settings.executable_variant).to_string();
+    launch_settings.x = 0;
+    launch_settings.y = 0;
 
-    if let Ok(v) = app.ui_settings.fps_limit.parse::<u32>() {
-        app.launch_settings.fps_limit = v.clamp(1, 360);
+    if let Ok(v) = ui_settings.fps_limit.parse::<u32>() {
+        launch_settings.fps_limit = v.clamp(1, 360);
     }
-    if let Some(res) = &app.ui_settings.selected_resolution {
-        app.launch_settings.width = res.width;
-        app.launch_settings.height = res.height;
+    if let Some(res) = &ui_settings.selected_resolution {
+        launch_settings.width = res.width;
+        launch_settings.height = res.height;
     }
-    app.launch_settings.cgroup_enabled = app.ui_settings.cgroup_enabled;
-    app.launch_settings.cgroup_mode = match app.ui_settings.cgroup_mode {
+    launch_settings.cgroup_enabled = ui_settings.cgroup_enabled;
+    launch_settings.cgroup_mode = match ui_settings.cgroup_mode {
         CgroupModeOption::Detect => CgroupMode::Detect,
         CgroupModeOption::LimitWine => CgroupMode::LimitWine,
     };
-    app.launch_settings.cgroup_memory_max = non_empty_trimmed(&app.ui_settings.cgroup_memory_max);
-    app.launch_settings.cgroup_cpu_max = non_empty_trimmed(&app.ui_settings.cgroup_cpu_max);
-    app.launch_settings.hide_debug_window = app.ui_settings.hide_debug_window;
-    app.launch_settings.disable_debug_window_input = app.ui_settings.disable_debug_window_input;
-    app.launch_settings.hidden_workspace_name = app.ui_settings.hidden_workspace_name.clone();
+    launch_settings.cgroup_memory_max = non_empty_trimmed(&ui_settings.cgroup_memory_max);
+    launch_settings.cgroup_cpu_max = non_empty_trimmed(&ui_settings.cgroup_cpu_max);
+    launch_settings.hide_debug_window = ui_settings.hide_debug_window;
+    launch_settings.disable_debug_window_input = ui_settings.disable_debug_window_input;
+    launch_settings.hidden_workspace_name = ui_settings.hidden_workspace_name.clone();
+}
+
+fn sync_launch_settings(app: &mut App) {
+    sync_launch_settings_from_ui(&app.ui_settings, &mut app.launch_settings);
 }
 
 fn persist_current_config(app: &App) {
@@ -858,6 +865,48 @@ fn detect_system_theme() -> Theme {
         dark_light::Mode::Light => Theme::Light,
         dark_light::Mode::Dark => Theme::Dark,
         dark_light::Mode::Default => Theme::Dark,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        infer_executable_variant,
+        settings_panel::{CgroupModeOption, LauncherModeOption, ResolutionOption, UiSettings},
+        sync_launch_settings_from_ui,
+    };
+    use we_core::config::LaunchSettings;
+
+    #[test]
+    fn sync_launch_settings_copies_workshop_path_from_ui() {
+        let ui_settings = UiSettings {
+            wallpaper_exe: "/tmp/wallpaper32.exe".to_string(),
+            executable_variant: infer_executable_variant("/tmp/wallpaper32.exe"),
+            workshop_path: "/tmp/workshop/content/431960".to_string(),
+            launcher_mode: LauncherModeOption::Wine,
+            wine_command: "wine".to_string(),
+            proton_path: String::new(),
+            fps_limit: "144".to_string(),
+            show_fps: true,
+            borderless: true,
+            hide_debug_window: true,
+            disable_debug_window_input: false,
+            hidden_workspace_name: "top".to_string(),
+            selected_resolution: Some(ResolutionOption { width: 1920, height: 1080 }),
+            cgroup_enabled: false,
+            cgroup_mode: CgroupModeOption::Detect,
+            cgroup_memory_max: String::new(),
+            cgroup_cpu_max: String::new(),
+            status_text: String::new(),
+        };
+        let mut launch_settings = LaunchSettings::default();
+
+        sync_launch_settings_from_ui(&ui_settings, &mut launch_settings);
+
+        assert_eq!(launch_settings.workshop_path, "/tmp/workshop/content/431960");
+        assert_eq!(launch_settings.wallpaper_exe, "/tmp/wallpaper32.exe");
+        assert_eq!(launch_settings.width, 1920);
+        assert_eq!(launch_settings.height, 1080);
     }
 }
 
