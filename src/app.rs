@@ -83,23 +83,23 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         },
     )?;
 
-    if let Some(runtime) = &cfg.runtime {
+    if let Some(runtime) = &runtime_cfg.runtime {
         if runtime.mode == RuntimeMode::VideoNative {
-            return run_video_native(runtime.video_file.as_deref(), &cfg, &control_rx);
+            return run_video_native(runtime.video_file.as_deref(), &runtime_cfg, &control_rx);
         }
     }
 
-    info!(?cfg, ?capture_match, "starting we-layerd run mode");
+    info!(cfg = ?runtime_cfg, ?capture_match, "starting we-layerd run mode");
     ensure_runtime_access()?;
-    let wine = WineProcessHandle::spawn(&cfg.wine)?;
+    let wine = WineProcessHandle::spawn(&runtime_cfg.wine)?;
     wine.install_ctrlc_handler()?;
     let cgroup_on_spawn = runtime_cgroup.clone();
     let on_spawn: Arc<dyn Fn(u32) + Send + Sync> = Arc::new(move |pid| {
         cgroup_on_spawn.on_wine_spawn(pid);
     });
     wine.install_exit_monitor(
-        cfg.wine.clone(),
-        cfg.general.restart_wine_on_exit,
+        runtime_cfg.wine.clone(),
+        runtime_cfg.general.restart_wine_on_exit,
         Some(on_spawn.clone()),
     );
     let wine_pid = wine.pid();
@@ -111,8 +111,8 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let capture_window = match window_finder::find_window_for_process(&capture_match, wine_pid)? {
         Some(found) => {
             info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
-            apply_debug_window_setup(&cfg, &debug_visibility, found.window);
-            if let Some(path) = cfg.capture.debug_save_frame_png.as_deref() {
+            apply_debug_window_setup(&runtime_cfg, &debug_visibility, found.window);
+            if let Some(path) = runtime_cfg.capture.debug_save_frame_png.as_deref() {
                 let frame = capture_xcomposite::capture_single_frame(found.window)?;
                 capture_xcomposite::save_frame_png(&frame, Path::new(path))?;
                 info!(path, "saved debug XComposite frame");
@@ -125,9 +125,9 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         }
     };
 
-    if matches!(gnome::resolve_backend(&cfg), ResolvedBackend::GnomeShell) {
+    if matches!(gnome::resolve_backend(&runtime_cfg), ResolvedBackend::GnomeShell) {
         return gnome::run_window_bridge(
-            &cfg,
+            &runtime_cfg,
             &capture_match,
             capture_window,
             wine_pid,
@@ -138,14 +138,14 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     wayland::layer_shell::run_single_background_surface(
         wayland::layer_shell::LayerRunConfig {
             capture_window: capture_window.as_ref().map(|found| found.window),
-            output_window_map: cfg.capture.output_window_map.clone(),
-            fps_limit: cfg.general.fps_limit,
-            show_fps: cfg.general.show_fps,
-            fps_report_interval_secs: cfg.general.fps_report_interval_secs,
-            scale_mode: cfg.general.scale_mode,
-            auto_refind_window: cfg.general.refind_window_on_capture_error,
+            output_window_map: runtime_cfg.capture.output_window_map.clone(),
+            fps_limit: runtime_cfg.general.fps_limit,
+            show_fps: runtime_cfg.general.show_fps,
+            fps_report_interval_secs: runtime_cfg.general.fps_report_interval_secs,
+            scale_mode: runtime_cfg.general.scale_mode,
+            auto_refind_window: runtime_cfg.general.refind_window_on_capture_error,
             capture_match,
-            disable_debug_window_input: cfg.general.disable_debug_window_input,
+            disable_debug_window_input: runtime_cfg.general.disable_debug_window_input,
             wine_pid,
         },
         Some(&control_rx),
@@ -162,7 +162,48 @@ fn effective_runtime_config(cfg: &Config) -> Config {
         }
     }
     runtime_cfg.capture = capture_match;
+    if matches!(gnome::resolve_backend(cfg), ResolvedBackend::GnomeShell) {
+        apply_xwayland_root_size(&mut runtime_cfg);
+    }
     runtime_cfg
+}
+
+fn apply_xwayland_root_size(cfg: &mut Config) {
+    if !cfg.wine.args.iter().any(|arg| arg == "-playInWindow") {
+        return;
+    }
+
+    let Ok((root_width, root_height)) = window_input::current_root_size() else {
+        return;
+    };
+
+    let mut adjusted = Vec::new();
+    if let Some((before, after)) = replace_numeric_wine_arg(&mut cfg.wine.args, "-width", root_width) {
+        adjusted.push(format!("-width: {before} -> {after}"));
+    }
+    if let Some((before, after)) = replace_numeric_wine_arg(&mut cfg.wine.args, "-height", root_height) {
+        adjusted.push(format!("-height: {before} -> {after}"));
+    }
+
+    if !adjusted.is_empty() {
+        info!(
+            root_width,
+            root_height,
+            changes = adjusted.join(", "),
+            "applied XWayland root-size wallpaper dimensions"
+        );
+    }
+}
+
+fn replace_numeric_wine_arg(args: &mut [String], flag: &str, replacement: u32) -> Option<(u32, u32)> {
+    let index = args.iter().position(|arg| arg == flag)?;
+    let value = args.get(index + 1)?.parse::<u32>().ok()?;
+    let slot = args.get_mut(index + 1)?;
+    if replacement == value {
+        return None;
+    }
+    *slot = replacement.to_string();
+    Some((value, replacement))
 }
 
 fn switch_wallpaper(cfg: &Config) -> Result<()> {

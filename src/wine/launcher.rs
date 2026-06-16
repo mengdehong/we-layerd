@@ -187,6 +187,8 @@ impl Drop for WineProcessHandle {
 }
 
 fn spawn_child(config: &WineConfig) -> Result<Child> {
+    maybe_disable_wine_x11_window_decorations(config)?;
+
     let mut cmd = Command::new(&config.command);
     let mut working_dir: Option<&Path> = None;
     match config.command_mode {
@@ -203,6 +205,9 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
             }
             working_dir = exe_path.parent();
             cmd.arg(&config.wallpaper_exe).args(&config.args);
+            if should_force_borderless(config) {
+                cmd.arg("-borderless");
+            }
         }
         WineCommandMode::CommandOnly => {
             if !config.wallpaper_exe.trim().is_empty() {
@@ -234,6 +239,57 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
     cmd.spawn().with_context(|| {
         format!("failed to spawn wine command '{}' for {}", config.command, config.wallpaper_exe)
     })
+}
+
+fn maybe_disable_wine_x11_window_decorations(config: &WineConfig) -> Result<()> {
+    if config.command_mode != WineCommandMode::ExeWithArgs {
+        return Ok(());
+    }
+
+    if !should_force_borderless(config) {
+        return Ok(());
+    }
+
+    let mut cmd = Command::new(&config.command);
+    cmd.args([
+        "reg",
+        "add",
+        "HKCU\\Software\\Wine\\X11 Driver",
+        "/v",
+        "Decorated",
+        "/t",
+        "REG_SZ",
+        "/d",
+        "N",
+        "/f",
+    ]);
+
+    if !config.env.is_empty() {
+        cmd.envs(config.env.iter());
+    }
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("failed to run '{}' to disable Wine X11 decorations", config.command))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(anyhow!(
+            "failed to disable Wine X11 decorations via registry (status: {:?}, stdout: {}, stderr: {})",
+            output.status.code(),
+            stdout,
+            stderr
+        ));
+    }
+
+    info!("disabled Wine X11 window decorations for borderless launch");
+    Ok(())
+}
+
+fn should_force_borderless(config: &WineConfig) -> bool {
+    config.args.iter().any(|arg| arg == "-borderless")
+        || config.args.iter().any(|arg| arg == "-playInWindow")
 }
 
 fn terminate_process_group(pgid: i32) -> Result<()> {

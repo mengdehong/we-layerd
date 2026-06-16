@@ -29,6 +29,13 @@ pub fn set_mouse_passthrough(window: u32) -> Result<()> {
     Ok(())
 }
 
+pub fn current_root_size() -> Result<(u32, u32)> {
+    let (conn, screen_num) =
+        RustConnection::connect(None).context("failed to connect to X11 display for root size query")?;
+    let screen = &conn.setup().roots[screen_num];
+    Ok((u32::from(screen.width_in_pixels), u32::from(screen.height_in_pixels)))
+}
+
 pub fn apply_wallpaper_window_hints(window: u32) -> Result<()> {
     let (conn, screen_num) =
         RustConnection::connect(None).context("failed to connect to X11 display for EWMH hints")?;
