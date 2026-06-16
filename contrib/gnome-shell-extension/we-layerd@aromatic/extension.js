@@ -79,18 +79,10 @@ class ManagedWindow {
             const frameRect = this._window.get_frame_rect?.();
             const needsMove = !frameRect ||
                 frameRect.x !== monitor.x ||
-                frameRect.y !== monitor.y ||
-                frameRect.width !== monitor.width ||
-                frameRect.height !== monitor.height;
+                frameRect.y !== monitor.y;
 
             if (needsMove) {
-                this._window.move_resize_frame(
-                    true,
-                    monitor.x,
-                    monitor.y,
-                    monitor.width,
-                    monitor.height
-                );
+                this._window.move_frame(true, monitor.x, monitor.y);
             }
         } finally {
             this._syncing = false;
