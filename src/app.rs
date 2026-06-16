@@ -1,40 +1,45 @@
 use std::{
     env,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc, Mutex},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use tracing::{info, warn};
 
 use crate::{
     cgroup::RuntimeCgroup,
     config::{Config, RuntimeMode, RuntimeWallpaperType},
-    gnome::{self, ResolvedBackend},
-    ipc::{self, ControlCommand},
+    gnome::{self, RegisteredWindow, ResolvedBackend},
+    ipc::{self, ControlCommand, RuntimeLoopExit},
     wayland,
     wine::launcher::{spawn_transient_command, WineProcessHandle},
     wm_visibility::DebugWindowVisibility,
     x11::{capture_xcomposite, window_finder, window_input},
 };
-use std::sync::mpsc;
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
     let runtime_cfg = effective_runtime_config(&cfg);
-    let capture_match = runtime_cfg.capture.clone();
-
     let runtime_cgroup = RuntimeCgroup::new(cfg.cgroup.clone());
-    let runtime_cfg_toml = Arc::new(Mutex::new(runtime_cfg.to_toml_pretty()?));
-    let current_cfg = Arc::new(Mutex::new(cfg.clone()));
     let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
+    let desired_cfg = Arc::new(Mutex::new(cfg.clone()));
+    let current_cfg = Arc::new(Mutex::new(cfg.clone()));
+    let runtime_cfg_toml = Arc::new(Mutex::new(runtime_cfg.to_toml_pretty()?));
+    let runtime_state = Arc::new(Mutex::new(RuntimeState::new(&runtime_cfg)));
+    let active_wine = Arc::new(Mutex::new(None::<WineProcessHandle>));
+    install_runtime_ctrlc_handler(active_wine.clone())?;
+
     let status_cgroup = runtime_cgroup.clone();
+    let status_state = runtime_state.clone();
     let debug_visibility = DebugWindowVisibility::new(
         cfg.general.hide_debug_window,
         cfg.general.hidden_workspace_name.clone(),
-        &capture_match,
+        &runtime_cfg.capture,
     );
     let handler_visibility = debug_visibility.clone();
+    let switch_tx = control_tx.clone();
+
     let _control_server = ipc::ControlServer::start(
         control_tx,
         {
@@ -44,6 +49,10 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                     .lock()
                     .map(|guard| guard.clone())
                     .unwrap_or_else(|_| "<status unavailable>".to_string());
+                if let Ok(guard) = status_state.lock() {
+                    status.push_str("\n\n");
+                    status.push_str(&guard.render_status_toml());
+                }
                 status.push_str("\n\n");
                 status.push_str(&status_cgroup.render_status_toml());
                 status
@@ -62,37 +71,359 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         },
         {
             let runtime_cfg_toml = runtime_cfg_toml.clone();
+            let desired_cfg = desired_cfg.clone();
             let current_cfg = current_cfg.clone();
+            let runtime_state = runtime_state.clone();
             move |config_path| {
                 let next_cfg = Config::load(Some(config_path))?;
+                let next_runtime_cfg = effective_runtime_config(&next_cfg);
                 let current_cfg_value = current_cfg
                     .lock()
                     .map(|guard| guard.clone())
                     .map_err(|_| anyhow!("failed to read current runtime config"))?;
-                ensure_switchable_runtime(&current_cfg_value)?;
-                switch_wallpaper(&next_cfg)?;
-                let next_runtime_cfg = effective_runtime_config(&next_cfg);
-                if let Ok(mut guard) = runtime_cfg_toml.lock() {
-                    *guard = next_runtime_cfg.to_toml_pretty()?;
+                let current_runtime_cfg = effective_runtime_config(&current_cfg_value);
+
+                if can_hot_switch_between(&current_runtime_cfg, &next_runtime_cfg) {
+                    if let Ok(mut state) = runtime_state.lock() {
+                        state.begin_switch(&next_runtime_cfg);
+                    }
+                    switch_wallpaper(&next_cfg)?;
+                    if let Ok(mut guard) = runtime_cfg_toml.lock() {
+                        *guard = next_runtime_cfg.to_toml_pretty()?;
+                    }
+                    if let Ok(mut guard) = current_cfg.lock() {
+                        *guard = next_cfg.clone();
+                    }
+                    if let Ok(mut guard) = desired_cfg.lock() {
+                        *guard = next_cfg;
+                    }
+                    if let Ok(mut state) = runtime_state.lock() {
+                        state.finish_hot_switch(&next_runtime_cfg);
+                    }
+                    return Ok(());
                 }
-                if let Ok(mut guard) = current_cfg.lock() {
+
+                if let Ok(mut guard) = desired_cfg.lock() {
                     *guard = next_cfg;
                 }
+                if let Ok(mut state) = runtime_state.lock() {
+                    state.begin_switch(&next_runtime_cfg);
+                }
+                switch_tx
+                    .send(ControlCommand::Reconfigure)
+                    .context("failed to schedule runtime reconfiguration")?;
                 Ok(())
             }
         },
     )?;
 
-    if let Some(runtime) = &runtime_cfg.runtime {
-        if runtime.mode == RuntimeMode::VideoNative {
-            return run_video_native(runtime.video_file.as_deref(), &runtime_cfg, &control_rx);
+    loop {
+        let next_cfg = desired_cfg
+            .lock()
+            .map(|guard| guard.clone())
+            .map_err(|_| anyhow!("failed to read desired runtime config"))?;
+        let runtime_cfg = effective_runtime_config(&next_cfg);
+
+        if let Ok(mut guard) = current_cfg.lock() {
+            *guard = next_cfg.clone();
+        }
+        if let Ok(mut guard) = runtime_cfg_toml.lock() {
+            *guard = runtime_cfg.to_toml_pretty()?;
+        }
+
+        let generation = {
+            let mut state =
+                runtime_state.lock().map_err(|_| anyhow!("runtime state lock poisoned"))?;
+            state.begin_session(&runtime_cfg)
+        };
+
+        let exit = match run_runtime_session(
+            &runtime_cfg,
+            &runtime_cgroup,
+            &debug_visibility,
+            &active_wine,
+            &runtime_state,
+            generation,
+            &control_rx,
+        ) {
+            Ok(exit) => exit,
+            Err(err) => {
+                if let Ok(mut state) = runtime_state.lock() {
+                    state.fail(generation, err.to_string());
+                }
+                return Err(err);
+            }
+        };
+
+        if let Ok(mut state) = runtime_state.lock() {
+            state.mark_stopping(generation);
+            state.mark_idle(generation);
+        }
+
+        match exit {
+            RuntimeLoopExit::Stop => break,
+            RuntimeLoopExit::RestartCurrent | RuntimeLoopExit::Reconfigure => continue,
         }
     }
 
-    info!(cfg = ?runtime_cfg, ?capture_match, "starting we-layerd run mode");
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeKind {
+    Idle,
+    Window,
+    Video,
+}
+
+impl RuntimeKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Window => "window",
+            Self::Video => "video",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimePhase {
+    Idle,
+    Starting,
+    AwaitingWindow,
+    Running,
+    Switching,
+    Stopping,
+    Failed,
+}
+
+impl RuntimePhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Starting => "starting",
+            Self::AwaitingWindow => "awaiting_window",
+            Self::Running => "running",
+            Self::Switching => "switching",
+            Self::Stopping => "stopping",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeTarget {
+    xid: u32,
+    pid: u32,
+    title: String,
+    wm_class: String,
+}
+
+impl From<&RegisteredWindow> for RuntimeTarget {
+    fn from(value: &RegisteredWindow) -> Self {
+        Self {
+            xid: value.xid,
+            pid: value.pid,
+            title: value.title.clone(),
+            wm_class: value.wm_class.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DesiredRuntime {
+    kind: RuntimeKind,
+    video_file: Option<String>,
+}
+
+impl DesiredRuntime {
+    fn from_config(cfg: &Config) -> Self {
+        match cfg.runtime.as_ref() {
+            Some(runtime) if runtime.mode == RuntimeMode::VideoNative => {
+                Self { kind: RuntimeKind::Video, video_file: runtime.video_file.clone() }
+            }
+            Some(_) => Self { kind: RuntimeKind::Window, video_file: None },
+            None => Self { kind: RuntimeKind::Window, video_file: None },
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeState {
+    backend: ResolvedBackend,
+    kind: RuntimeKind,
+    phase: RuntimePhase,
+    generation: u64,
+    target: Option<RuntimeTarget>,
+    video_file: Option<String>,
+    desired: DesiredRuntime,
+    error: Option<String>,
+}
+
+impl RuntimeState {
+    fn new(cfg: &Config) -> Self {
+        Self {
+            backend: gnome::resolve_backend(cfg),
+            kind: RuntimeKind::Idle,
+            phase: RuntimePhase::Idle,
+            generation: 0,
+            target: None,
+            video_file: None,
+            desired: DesiredRuntime::from_config(cfg),
+            error: None,
+        }
+    }
+
+    fn begin_session(&mut self, cfg: &Config) -> u64 {
+        self.generation = self.generation.saturating_add(1);
+        self.backend = gnome::resolve_backend(cfg);
+        self.desired = DesiredRuntime::from_config(cfg);
+        self.kind = RuntimeKind::Idle;
+        self.phase = RuntimePhase::Starting;
+        self.target = None;
+        self.video_file = None;
+        self.error = None;
+        self.generation
+    }
+
+    fn begin_switch(&mut self, cfg: &Config) {
+        self.backend = gnome::resolve_backend(cfg);
+        self.desired = DesiredRuntime::from_config(cfg);
+        self.phase = RuntimePhase::Switching;
+        self.error = None;
+    }
+
+    fn finish_hot_switch(&mut self, cfg: &Config) {
+        self.backend = gnome::resolve_backend(cfg);
+        self.desired = DesiredRuntime::from_config(cfg);
+        self.kind = RuntimeKind::Window;
+        self.phase = RuntimePhase::Running;
+        self.video_file = None;
+        self.error = None;
+    }
+
+    fn mark_awaiting_window(&mut self, generation: u64) {
+        if generation != self.generation {
+            return;
+        }
+        self.kind = RuntimeKind::Window;
+        self.phase = RuntimePhase::AwaitingWindow;
+        self.target = None;
+        self.video_file = None;
+        self.error = None;
+    }
+
+    fn mark_running_window(&mut self, generation: u64, target: Option<RuntimeTarget>) {
+        if generation != self.generation {
+            return;
+        }
+        self.kind = RuntimeKind::Window;
+        self.phase = RuntimePhase::Running;
+        self.target = target;
+        self.video_file = None;
+        self.error = None;
+    }
+
+    fn mark_running_video(&mut self, generation: u64, video_file: String) {
+        if generation != self.generation {
+            return;
+        }
+        self.kind = RuntimeKind::Video;
+        self.phase = RuntimePhase::Running;
+        self.target = None;
+        self.video_file = Some(video_file);
+        self.error = None;
+    }
+
+    fn mark_stopping(&mut self, generation: u64) {
+        if generation != self.generation {
+            return;
+        }
+        self.phase = RuntimePhase::Stopping;
+    }
+
+    fn mark_idle(&mut self, generation: u64) {
+        if generation != self.generation {
+            return;
+        }
+        self.kind = RuntimeKind::Idle;
+        self.phase = RuntimePhase::Idle;
+        self.target = None;
+        self.video_file = None;
+        self.error = None;
+    }
+
+    fn fail(&mut self, generation: u64, error: String) {
+        if generation != self.generation {
+            return;
+        }
+        self.phase = RuntimePhase::Failed;
+        self.error = Some(error);
+    }
+
+    fn render_status_toml(&self) -> String {
+        let mut lines = vec![
+            "[orchestrator]".to_string(),
+            format!("backend = \"{}\"", backend_name(self.backend)),
+            format!("kind = \"{}\"", self.kind.as_str()),
+            format!("phase = \"{}\"", self.phase.as_str()),
+            format!("generation = {}", self.generation),
+            format!("desired_kind = \"{}\"", self.desired.kind.as_str()),
+        ];
+        if let Some(video_file) = &self.desired.video_file {
+            lines.push(format!("desired_video_file = {:?}", video_file));
+        }
+        if let Some(video_file) = &self.video_file {
+            lines.push(format!("video_file = {:?}", video_file));
+        }
+        if let Some(target) = &self.target {
+            lines.push(format!("target_xid = {}", target.xid));
+            lines.push(format!("target_pid = {}", target.pid));
+            lines.push(format!("target_title = {:?}", target.title));
+            lines.push(format!("target_wm_class = {:?}", target.wm_class));
+        }
+        if let Some(error) = &self.error {
+            lines.push(format!("error = {:?}", error));
+        }
+        lines.join("\n")
+    }
+}
+
+fn backend_name(backend: ResolvedBackend) -> &'static str {
+    match backend {
+        ResolvedBackend::LayerShell => "layer_shell",
+        ResolvedBackend::GnomeShell => "gnome_shell",
+    }
+}
+
+fn run_runtime_session(
+    runtime_cfg: &Config,
+    runtime_cgroup: &RuntimeCgroup,
+    debug_visibility: &DebugWindowVisibility,
+    active_wine: &Arc<Mutex<Option<WineProcessHandle>>>,
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+    generation: u64,
+    control_rx: &mpsc::Receiver<ControlCommand>,
+) -> Result<RuntimeLoopExit> {
+    if let Some(runtime) = &runtime_cfg.runtime {
+        if runtime.mode == RuntimeMode::VideoNative {
+            return run_video_native(
+                runtime.video_file.as_deref(),
+                runtime_cfg,
+                runtime_state,
+                generation,
+                control_rx,
+            );
+        }
+    }
+
+    info!(cfg = ?runtime_cfg, ?runtime_cfg.capture, "starting we-layerd run mode");
     ensure_runtime_access()?;
     let wine = WineProcessHandle::spawn(&runtime_cfg.wine)?;
-    wine.install_ctrlc_handler()?;
+    if let Ok(mut guard) = active_wine.lock() {
+        *guard = Some(wine.clone());
+    }
+
     let cgroup_on_spawn = runtime_cgroup.clone();
     let on_spawn: Arc<dyn Fn(u32) + Send + Sync> = Arc::new(move |pid| {
         cgroup_on_spawn.on_wine_spawn(pid);
@@ -108,48 +439,82 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     }
     info!(pid = wine_pid, "wine launcher enabled");
 
-    let capture_window = match window_finder::find_window_for_process(&capture_match, wine_pid)? {
-        Some(found) => {
-            info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
-            apply_debug_window_setup(&runtime_cfg, &debug_visibility, found.window);
-            if let Some(path) = runtime_cfg.capture.debug_save_frame_png.as_deref() {
-                let frame = capture_xcomposite::capture_single_frame(found.window)?;
-                capture_xcomposite::save_frame_png(&frame, Path::new(path))?;
-                info!(path, "saved debug XComposite frame");
-            }
-            Some(found)
-        }
-        None => {
-            warn!("no X11 window found yet, continuing with Wayland layer loop");
-            None
-        }
-    };
-
-    if matches!(gnome::resolve_backend(&runtime_cfg), ResolvedBackend::GnomeShell) {
-        return gnome::run_window_bridge(
-            &runtime_cfg,
-            &capture_match,
-            capture_window,
-            wine_pid,
-            &control_rx,
-        );
+    if let Ok(mut state) = runtime_state.lock() {
+        state.mark_awaiting_window(generation);
     }
 
-    wayland::layer_shell::run_single_background_surface(
-        wayland::layer_shell::LayerRunConfig {
-            capture_window: capture_window.as_ref().map(|found| found.window),
-            output_window_map: runtime_cfg.capture.output_window_map.clone(),
-            fps_limit: runtime_cfg.general.fps_limit,
-            show_fps: runtime_cfg.general.show_fps,
-            fps_report_interval_secs: runtime_cfg.general.fps_report_interval_secs,
-            scale_mode: runtime_cfg.general.scale_mode,
-            auto_refind_window: runtime_cfg.general.refind_window_on_capture_error,
-            capture_match,
-            disable_debug_window_input: runtime_cfg.general.disable_debug_window_input,
+    let capture_window =
+        match window_finder::find_window_for_process(&runtime_cfg.capture, wine_pid)? {
+            Some(found) => {
+                info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
+                apply_debug_window_setup(runtime_cfg, debug_visibility, found.window);
+                if let Some(path) = runtime_cfg.capture.debug_save_frame_png.as_deref() {
+                    let frame = capture_xcomposite::capture_single_frame(found.window)?;
+                    capture_xcomposite::save_frame_png(&frame, Path::new(path))?;
+                    info!(path, "saved debug XComposite frame");
+                }
+                let target = RuntimeTarget {
+                    xid: found.window,
+                    pid: found.metadata.pid.unwrap_or_default(),
+                    title: found.metadata.title.clone(),
+                    wm_class: found.metadata.wm_class.clone(),
+                };
+                if let Ok(mut state) = runtime_state.lock() {
+                    state.mark_running_window(generation, Some(target));
+                }
+                Some(found)
+            }
+            None => {
+                warn!("no X11 window found yet, continuing with Wayland layer loop");
+                None
+            }
+        };
+
+    let exit = if matches!(gnome::resolve_backend(runtime_cfg), ResolvedBackend::GnomeShell) {
+        let runtime_state = runtime_state.clone();
+        gnome::run_window_bridge(
+            runtime_cfg,
+            &runtime_cfg.capture,
+            capture_window,
             wine_pid,
-        },
-        Some(&control_rx),
-    )
+            control_rx,
+            move |registered| {
+                if let Ok(mut state) = runtime_state.lock() {
+                    match registered {
+                        Some(window) => {
+                            state
+                                .mark_running_window(generation, Some(RuntimeTarget::from(window)));
+                        }
+                        None => state.mark_awaiting_window(generation),
+                    }
+                }
+            },
+        )?
+    } else {
+        if let Ok(mut state) = runtime_state.lock() {
+            state.mark_running_window(generation, None);
+        }
+        wayland::layer_shell::run_single_background_surface(
+            wayland::layer_shell::LayerRunConfig {
+                capture_window: capture_window.as_ref().map(|found| found.window),
+                output_window_map: runtime_cfg.capture.output_window_map.clone(),
+                fps_limit: runtime_cfg.general.fps_limit,
+                show_fps: runtime_cfg.general.show_fps,
+                fps_report_interval_secs: runtime_cfg.general.fps_report_interval_secs,
+                scale_mode: runtime_cfg.general.scale_mode,
+                auto_refind_window: runtime_cfg.general.refind_window_on_capture_error,
+                capture_match: runtime_cfg.capture.clone(),
+                disable_debug_window_input: runtime_cfg.general.disable_debug_window_input,
+                wine_pid,
+            },
+            Some(control_rx),
+        )?
+    };
+
+    if let Ok(mut guard) = active_wine.lock() {
+        *guard = None;
+    }
+    Ok(exit)
 }
 
 fn effective_runtime_config(cfg: &Config) -> Config {
@@ -221,6 +586,10 @@ fn switch_wallpaper(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
+fn can_hot_switch_between(current_cfg: &Config, next_cfg: &Config) -> bool {
+    ensure_switchable_runtime(current_cfg).is_ok() && ensure_switchable_runtime(next_cfg).is_ok()
+}
+
 fn ensure_switchable_runtime(cfg: &Config) -> Result<()> {
     let runtime = cfg
         .runtime
@@ -238,11 +607,17 @@ fn ensure_switchable_runtime(cfg: &Config) -> Result<()> {
 fn run_video_native(
     video_file: Option<&str>,
     cfg: &Config,
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+    generation: u64,
     control_rx: &mpsc::Receiver<ControlCommand>,
-) -> Result<()> {
+) -> Result<RuntimeLoopExit> {
     let video = video_file
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow!("runtime.video_file is required when runtime.mode=video_native"))?;
+
+    if let Ok(mut state) = runtime_state.lock() {
+        state.mark_running_video(generation, video.to_string());
+    }
 
     if matches!(gnome::resolve_backend(cfg), ResolvedBackend::GnomeShell) {
         info!(video, "starting GNOME video mode via shell extension");
@@ -330,5 +705,62 @@ fn apply_debug_window_setup(cfg: &Config, debug_visibility: &DebugWindowVisibili
         if let Err(err) = debug_visibility.hide() {
             warn!(error = %err, "failed to auto-hide debug window");
         }
+    }
+}
+
+fn install_runtime_ctrlc_handler(active_wine: Arc<Mutex<Option<WineProcessHandle>>>) -> Result<()> {
+    ctrlc::set_handler(move || {
+        warn!("received Ctrl+C, terminating active runtime");
+        if let Ok(guard) = active_wine.lock() {
+            if let Some(handle) = guard.as_ref() {
+                if let Err(err) = handle.terminate() {
+                    warn!(error = %err, "failed to terminate wine process on Ctrl+C");
+                }
+            }
+        }
+        std::process::exit(130);
+    })
+    .context("failed to register Ctrl+C handler")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        can_hot_switch_between, RuntimeMode, RuntimePhase, RuntimeState, RuntimeWallpaperType,
+    };
+    use crate::config::{Config, RuntimeConfig};
+
+    #[test]
+    fn hot_switch_requires_window_runtime_on_both_sides() {
+        let mut current = Config::default();
+        current.runtime = Some(RuntimeConfig {
+            mode: RuntimeMode::WineLayerd,
+            wallpaper_type: RuntimeWallpaperType::Scene,
+            video_file: None,
+        });
+
+        let mut next = current.clone();
+        next.runtime = Some(RuntimeConfig {
+            mode: RuntimeMode::VideoNative,
+            wallpaper_type: RuntimeWallpaperType::Video,
+            video_file: Some("/tmp/demo.mp4".to_string()),
+        });
+
+        assert!(!can_hot_switch_between(&current, &next));
+        assert!(can_hot_switch_between(&current, &current));
+    }
+
+    #[test]
+    fn stale_generation_does_not_override_current_phase() {
+        let cfg = Config::default();
+        let mut state = RuntimeState::new(&cfg);
+        let generation = state.begin_session(&cfg);
+        state.mark_running_window(generation, None);
+        let current_generation = state.begin_session(&cfg);
+
+        state.mark_stopping(generation);
+
+        assert_eq!(state.generation, current_generation);
+        assert_eq!(state.phase, RuntimePhase::Starting);
     }
 }

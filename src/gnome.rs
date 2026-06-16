@@ -6,7 +6,7 @@ use zbus::blocking::{Connection, Proxy};
 
 use crate::{
     config::{Backend, CaptureConfig, Config},
-    ipc::ControlCommand,
+    ipc::{ControlCommand, RuntimeLoopExit},
     x11::{window_finder, window_input},
 };
 
@@ -59,7 +59,8 @@ pub fn run_window_bridge(
     initial_window: Option<window_finder::WindowFinderResult>,
     wine_pid: Option<u32>,
     control_rx: &mpsc::Receiver<ControlCommand>,
-) -> Result<()> {
+    mut on_active_window: impl FnMut(Option<&RegisteredWindow>),
+) -> Result<RuntimeLoopExit> {
     let client = GnomeShellClient::connect(&cfg.gnome.extension_dbus_name)?;
     let version = client.ping()?;
     info!(version, "connected to GNOME wallpaper extension");
@@ -67,6 +68,7 @@ pub fn run_window_bridge(
     let mut active = None;
     if let Some(found) = initial_window {
         active = register_found_window(cfg, &client, found)?;
+        on_active_window(active.as_ref());
     }
 
     loop {
@@ -76,7 +78,15 @@ pub fn run_window_bridge(
                 if let Some(window) = &active {
                     let _ = client.unregister_window(window.xid);
                     client.register_window(window)?;
+                    on_active_window(active.as_ref());
                 }
+            }
+            Ok(ControlCommand::Reconfigure) => {
+                if let Some(current) = active.take() {
+                    client.unregister_window(current.xid)?;
+                }
+                on_active_window(None);
+                return Ok(RuntimeLoopExit::Reconfigure);
             }
             Ok(_) => {}
             Err(mpsc::TryRecvError::Empty) => {}
@@ -88,11 +98,13 @@ pub fn run_window_bridge(
                 let next = window_from_found(&found);
                 if active.as_ref() != Some(&next) {
                     active = register_found_window(cfg, &client, found)?;
+                    on_active_window(active.as_ref());
                 }
             }
             Ok(None) => {
                 if let Some(current) = active.take() {
                     client.unregister_window(current.xid)?;
+                    on_active_window(None);
                 }
             }
             Err(err) => warn!(error = %err, "failed to rescan X11 window for GNOME backend"),
@@ -104,15 +116,16 @@ pub fn run_window_bridge(
     if let Some(current) = active {
         client.unregister_window(current.xid)?;
     }
+    on_active_window(None);
 
-    Ok(())
+    Ok(RuntimeLoopExit::Stop)
 }
 
 pub fn run_video_bridge(
     cfg: &Config,
     video_file: &Path,
     control_rx: &mpsc::Receiver<ControlCommand>,
-) -> Result<()> {
+) -> Result<RuntimeLoopExit> {
     let client = GnomeShellClient::connect(&cfg.gnome.extension_dbus_name)?;
     let version = client.ping()?;
     info!(version, "connected to GNOME wallpaper extension");
@@ -132,6 +145,10 @@ pub fn run_video_bridge(
             Ok(ControlCommand::Reload) => {
                 client.start_video(video_file)?;
             }
+            Ok(ControlCommand::Reconfigure) => {
+                client.stop_video()?;
+                return Ok(RuntimeLoopExit::Reconfigure);
+            }
             Ok(ControlCommand::HideWindow) | Ok(ControlCommand::ShowWindow) => {}
             Err(mpsc::TryRecvError::Empty) => {
                 std::thread::sleep(Duration::from_millis(200));
@@ -141,7 +158,7 @@ pub fn run_video_bridge(
     }
 
     client.stop_video()?;
-    Ok(())
+    Ok(RuntimeLoopExit::Stop)
 }
 
 pub fn doctor(cfg: &Config) -> Result<()> {

@@ -20,6 +20,7 @@ pub enum ControlCommand {
     Pause,
     Resume,
     Reload,
+    Reconfigure,
     HideWindow,
     ShowWindow,
 }
@@ -31,6 +32,7 @@ impl ControlCommand {
             Self::Pause => "pause",
             Self::Resume => "resume",
             Self::Reload => "reload",
+            Self::Reconfigure => "reconfigure",
             Self::HideWindow => "hide-window",
             Self::ShowWindow => "show-window",
         }
@@ -47,6 +49,13 @@ impl ControlCommand {
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeLoopExit {
+    Stop,
+    RestartCurrent,
+    Reconfigure,
 }
 
 #[derive(Debug, Clone)]

@@ -27,7 +27,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 
 use crate::{
     config::{CaptureConfig, ScaleMode},
-    ipc::ControlCommand,
+    ipc::{ControlCommand, RuntimeLoopExit},
     video::decoder::VideoPlayer,
     wayland::{outputs, render_wgpu::WgpuRenderer},
     x11::{capture_xcomposite, window_finder, window_input},
@@ -186,7 +186,7 @@ delegate_noop!(AppState: ignore ZwlrLayerShellV1);
 pub fn run_single_background_surface(
     run_cfg: LayerRunConfig,
     control_rx: Option<&mpsc::Receiver<ControlCommand>>,
-) -> Result<()> {
+) -> Result<RuntimeLoopExit> {
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
     let (globals, mut event_queue) =
         registry_queue_init::<AppState>(&conn).context("failed to initialize Wayland registry")?;
@@ -253,9 +253,8 @@ pub fn run_single_background_surface(
         let frame_start = Instant::now();
         let now = Instant::now();
         let mut frame_cache: HashMap<u32, capture_xcomposite::CapturedFrame> = HashMap::new();
-        process_control(control_rx, &mut state.running, &mut paused);
-        if !state.running {
-            break;
+        if let Some(exit) = process_control(control_rx, &mut state.running, &mut paused) {
+            return Ok(exit);
         }
 
         if let Err(err) = event_queue.dispatch_pending(&mut state) {
@@ -435,7 +434,7 @@ pub fn run_single_background_surface(
         }
     }
 
-    Ok(())
+    Ok(RuntimeLoopExit::Stop)
 }
 
 pub fn run_video_background_surface(
@@ -445,7 +444,7 @@ pub fn run_video_background_surface(
     fps_report_interval_secs: u64,
     scale_mode: ScaleMode,
     control_rx: Option<&mpsc::Receiver<ControlCommand>>,
-) -> Result<()> {
+) -> Result<RuntimeLoopExit> {
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
     let (globals, mut event_queue) =
         registry_queue_init::<AppState>(&conn).context("failed to initialize Wayland registry")?;
@@ -514,9 +513,8 @@ pub fn run_video_background_surface(
 
     while state.running {
         let frame_start = Instant::now();
-        process_control(control_rx, &mut state.running, &mut paused);
-        if !state.running {
-            break;
+        if let Some(exit) = process_control(control_rx, &mut state.running, &mut paused) {
+            return Ok(exit);
         }
         if let Err(err) = event_queue.dispatch_pending(&mut state) {
             error!(error = %err, "wayland event dispatch failed in video mode");
@@ -612,22 +610,23 @@ pub fn run_video_background_surface(
         }
     }
 
-    Ok(())
+    Ok(RuntimeLoopExit::Stop)
 }
 
 fn process_control(
     control_rx: Option<&mpsc::Receiver<ControlCommand>>,
     running: &mut bool,
     paused: &mut bool,
-) {
+) -> Option<RuntimeLoopExit> {
     let Some(rx) = control_rx else {
-        return;
+        return None;
     };
 
     loop {
         match rx.try_recv() {
             Ok(ControlCommand::Stop) => {
                 *running = false;
+                return Some(RuntimeLoopExit::Stop);
             }
             Ok(ControlCommand::Pause) => {
                 *paused = true;
@@ -637,12 +636,19 @@ fn process_control(
             }
             Ok(ControlCommand::Reload) => {
                 *running = false;
+                return Some(RuntimeLoopExit::RestartCurrent);
+            }
+            Ok(ControlCommand::Reconfigure) => {
+                *running = false;
+                return Some(RuntimeLoopExit::Reconfigure);
             }
             Ok(ControlCommand::HideWindow) | Ok(ControlCommand::ShowWindow) => {}
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => break,
         }
     }
+
+    None
 }
 
 pub fn probe_layer_shell_support() -> Result<bool> {

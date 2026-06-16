@@ -47,18 +47,6 @@ impl WineProcessHandle {
         })
     }
 
-    pub fn install_ctrlc_handler(&self) -> Result<()> {
-        let handle = self.clone();
-        ctrlc::set_handler(move || {
-            warn!("received Ctrl+C, terminating wine process");
-            if let Err(err) = handle.terminate() {
-                warn!(error = %err, "failed to terminate wine process on Ctrl+C");
-            }
-            std::process::exit(130);
-        })
-        .context("failed to register Ctrl+C handler")
-    }
-
     pub fn install_exit_monitor(
         &self,
         config: WineConfig,
