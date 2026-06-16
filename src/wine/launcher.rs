@@ -324,7 +324,7 @@ fn suppress_bootstrap_windows(root_pid: i32) {
     std::thread::spawn(move || {
         let names = ["explorer.exe", "ui32.exe"];
         // Let Wine/X11 finish creating the real wallpaper window before pruning helpers.
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(Duration::from_secs(5));
         for _ in 0..12 {
             if !is_process_alive(root_pid) {
                 break;
