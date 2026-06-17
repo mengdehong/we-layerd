@@ -25,6 +25,7 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 - GNOME Shell 45+ for GNOME window-bridge mode, plus the bundled extension from [contrib/gnome-shell-extension](./contrib/gnome-shell-extension).
 - `gjs` with Gtk 4 support for GNOME native video mode.
 - XWayland/X11 for Wine render window capture.
+- `gamescope` for optional headless display isolation.
 - X11 Composite extension.
 - Vulkan/GL stack usable by `wgpu`.
 - FFmpeg libraries and headers (`libavformat`, `libavcodec`, `libavutil`, `libswscale`).
@@ -33,7 +34,7 @@ Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
 
 Example packages (Arch Linux):
 ```bash
-sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr
+sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr gamescope
 ```
 
 ## Build

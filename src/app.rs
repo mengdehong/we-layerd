@@ -9,7 +9,8 @@ use tracing::{info, warn};
 
 use crate::{
     cgroup::RuntimeCgroup,
-    config::{Config, RuntimeMode, RuntimeWallpaperType},
+    config::{Config, IsolationMode, RuntimeMode, RuntimeWallpaperType},
+    display_isolation,
     gnome::{self, RegisteredWindow, ResolvedBackend},
     ipc::{self, ControlCommand, RuntimeLoopExit},
     wayland,
@@ -417,6 +418,9 @@ fn run_runtime_session(
         }
     }
 
+    let mut runtime_cfg = runtime_cfg.clone();
+    let _display_isolation = display_isolation::start_for_config(&mut runtime_cfg)?;
+
     info!(cfg = ?runtime_cfg, ?runtime_cfg.capture, "starting we-layerd run mode");
     ensure_runtime_access()?;
     let wine = WineProcessHandle::spawn(&runtime_cfg.wine)?;
@@ -447,7 +451,7 @@ fn run_runtime_session(
         match window_finder::find_window_for_process(&runtime_cfg.capture, wine_pid)? {
             Some(found) => {
                 info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
-                apply_debug_window_setup(runtime_cfg, debug_visibility, found.window);
+                apply_debug_window_setup(&runtime_cfg, debug_visibility, found.window);
                 if let Some(path) = runtime_cfg.capture.debug_save_frame_png.as_deref() {
                     let frame = capture_xcomposite::capture_single_frame(found.window)?;
                     capture_xcomposite::save_frame_png(&frame, Path::new(path))?;
@@ -470,10 +474,10 @@ fn run_runtime_session(
             }
         };
 
-    let exit = if matches!(gnome::resolve_backend(runtime_cfg), ResolvedBackend::GnomeShell) {
+    let exit = if matches!(gnome::resolve_backend(&runtime_cfg), ResolvedBackend::GnomeShell) {
         let runtime_state = runtime_state.clone();
         gnome::run_window_bridge(
-            runtime_cfg,
+            &runtime_cfg,
             &runtime_cfg.capture,
             capture_window,
             wine_pid,
@@ -701,7 +705,7 @@ fn apply_debug_window_setup(cfg: &Config, debug_visibility: &DebugWindowVisibili
             warn!(error = %err, window, "failed to set debug window mouse passthrough");
         }
     }
-    if debug_visibility.auto_hide {
+    if debug_visibility.auto_hide && cfg.isolation.mode == IsolationMode::None {
         if let Err(err) = debug_visibility.hide() {
             warn!(error = %err, "failed to auto-hide debug window");
         }

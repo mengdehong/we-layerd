@@ -5,6 +5,13 @@ refind_window_on_capture_error = true
 show_fps = true
 fps_report_interval_secs = 2
 
+[isolation]
+mode = "gamescope_headless"
+command = "gamescope"
+width = 2560
+height = 1600
+startup_timeout_secs = 10
+
 [wine]
 command = "wine"
 wallpaper_exe = "/home/aromatic/.local/share/Steam/steamapps/common/wallpaper_engine/wallpaper64.exe"

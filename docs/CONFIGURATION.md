@@ -21,6 +21,19 @@ memory_max = "max"   # optional, e.g. "2147483648"
 cpu_max = "max 100000" # optional, e.g. "50000 100000"
 ```
 
+Hard-isolate the debug window:
+```toml
+[isolation]
+mode = "gamescope_headless" # none | gamescope_headless
+command = "gamescope"
+width = 2560
+height = 1600
+startup_timeout_secs = 10
+```
+- `none`: Wine still creates a host XWayland/Niri window, and `hide_debug_window` moves or hides it.
+- `gamescope_headless`: starts a headless gamescope instance, runs Wine against gamescope's internal XWayland display, and captures XComposite from that internal `DISPLAY`. Niri never sees the Wallpaper Engine window, so switching workspaces or opening overview cannot reveal it.
+- `width`/`height` are optional. When omitted, we-layerd uses `-width` / `-height` from `wine.args`, then falls back to 1920x1080.
+
 Debug window visibility:
 ```toml
 [general]
@@ -32,6 +45,7 @@ hidden_workspace_name = "top"
 - sway: uses scratchpad behavior.
 - niri: target workspace spec; use `top` to move to the top/first workspace.
 For niri, hide flow is `move-window-to-workspace` first, then `move-window-to-floating`.
+When `isolation.mode = "gamescope_headless"` is enabled, host WM hiding is skipped because the real Wine window is no longer in the host window tree.
 
 niri startup sizing:
 - Wallpaper Engine debug window may open as half-screen by default under niri tiling.
