@@ -21,6 +21,19 @@ memory_max = "max"   # 可选，如 "2147483648"
 cpu_max = "max 100000" # 可选，如 "50000 100000"
 ```
 
+硬隔离调试窗口：
+```toml
+[isolation]
+mode = "gamescope_headless" # none | gamescope_headless
+command = "gamescope"
+width = 2560
+height = 1600
+startup_timeout_secs = 10
+```
+- `none`：Wine 窗口仍在宿主 XWayland/Niri 中，`hide_debug_window` 负责移动或隐藏它。
+- `gamescope_headless`：启动一个无窗口 gamescope，Wine 连接 gamescope 内部 XWayland，we-layerd 也从该内部 `DISPLAY` 抓 XComposite。此时 Niri 不会枚举到 Wallpaper Engine 窗口，用户主动切工作区或打开 overview 也看不到它。
+- `width`/`height` 可省略；省略时优先使用 `wine.args` 中的 `-width` / `-height`，再退回到 1920x1080。
+
 调试窗口隐藏配置：
 ```toml
 [general]
@@ -32,6 +45,7 @@ hidden_workspace_name = "top"
 - sway：使用 scratchpad 机制。
 - niri：作为目标工作区标识；`top` 表示最上/第一个工作区。
 在 niri 下隐藏顺序是先 `move-window-to-workspace`，再 `move-window-to-floating`。
+如果启用 `isolation.mode = "gamescope_headless"`，宿主 WM 隐藏逻辑会跳过，因为真实 Wine 窗口已经不在宿主窗口树里。
 
 niri 启动尺寸：
 - niri 的默认平铺行为可能让 Wallpaper Engine 调试窗口初始为半屏。

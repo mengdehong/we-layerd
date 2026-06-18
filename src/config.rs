@@ -17,6 +17,8 @@ pub struct Config {
     pub runtime: Option<RuntimeConfig>,
     #[serde(default)]
     pub cgroup: CgroupConfig,
+    #[serde(default)]
+    pub isolation: IsolationConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +89,28 @@ pub enum WineCommandMode {
     #[default]
     ExeWithArgs,
     CommandOnly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IsolationConfig {
+    #[serde(default)]
+    pub mode: IsolationMode,
+    #[serde(default = "default_isolation_command")]
+    pub command: String,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default = "default_isolation_startup_timeout_secs")]
+    pub startup_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IsolationMode {
+    #[default]
+    None,
+    GamescopeHeadless,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +187,14 @@ fn default_wine_cmd() -> String {
     "wine".to_string()
 }
 
+fn default_isolation_command() -> String {
+    "gamescope".to_string()
+}
+
+fn default_isolation_startup_timeout_secs() -> u64 {
+    10
+}
+
 fn default_restart_wine() -> bool {
     true
 }
@@ -218,6 +250,18 @@ impl Default for WineConfig {
     }
 }
 
+impl Default for IsolationConfig {
+    fn default() -> Self {
+        Self {
+            mode: IsolationMode::None,
+            command: default_isolation_command(),
+            width: None,
+            height: None,
+            startup_timeout_secs: default_isolation_startup_timeout_secs(),
+        }
+    }
+}
+
 impl Default for CaptureConfig {
     fn default() -> Self {
         Self {
@@ -256,11 +300,27 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::Config;
+    use super::{Config, IsolationMode};
 
     #[test]
     fn default_config_has_expected_fps() {
         let cfg = Config::default();
         assert_eq!(cfg.general.fps_limit, 30);
+    }
+
+    #[test]
+    fn isolation_config_accepts_gamescope_headless() {
+        let raw = r#"
+            [isolation]
+            mode = "gamescope_headless"
+            width = 2560
+            height = 1600
+        "#;
+
+        let cfg: Config = toml::from_str(raw).expect("valid isolation config");
+
+        assert_eq!(cfg.isolation.mode, IsolationMode::GamescopeHeadless);
+        assert_eq!(cfg.isolation.width, Some(2560));
+        assert_eq!(cfg.isolation.height, Some(1600));
     }
 }

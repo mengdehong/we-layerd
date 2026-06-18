@@ -8,6 +8,13 @@ fps_report_interval_secs = 1
 hide_debug_window = true
 hidden_workspace_name = "top"
 
+[isolation]
+mode = "none" # none | gamescope_headless
+command = "gamescope"
+# width = 2560
+# height = 1600
+startup_timeout_secs = 10
+
 [gnome]
 extension_dbus_name = "io.github.weLayerd.Gnome"
 

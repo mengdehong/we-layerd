@@ -1,7 +1,10 @@
 use std::{
     env,
     path::Path,
-    sync::{mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -9,7 +12,8 @@ use tracing::{info, warn};
 
 use crate::{
     cgroup::RuntimeCgroup,
-    config::{Config, RuntimeMode, RuntimeWallpaperType},
+    config::{Config, IsolationMode, RuntimeMode, RuntimeWallpaperType},
+    display_isolation,
     gnome::{self, RegisteredWindow, ResolvedBackend},
     ipc::{self, ControlCommand, RuntimeLoopExit},
     wayland,
@@ -27,8 +31,8 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let current_cfg = Arc::new(Mutex::new(cfg.clone()));
     let runtime_cfg_toml = Arc::new(Mutex::new(runtime_cfg.to_toml_pretty()?));
     let runtime_state = Arc::new(Mutex::new(RuntimeState::new(&runtime_cfg)));
-    let active_wine = Arc::new(Mutex::new(None::<WineProcessHandle>));
-    install_runtime_ctrlc_handler(active_wine.clone())?;
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+    install_runtime_ctrlc_handler(control_tx.clone(), shutdown_requested.clone())?;
 
     let status_cgroup = runtime_cgroup.clone();
     let status_state = runtime_state.clone();
@@ -141,7 +145,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             &runtime_cfg,
             &runtime_cgroup,
             &debug_visibility,
-            &active_wine,
+            &shutdown_requested,
             &runtime_state,
             generation,
             &control_rx,
@@ -400,7 +404,7 @@ fn run_runtime_session(
     runtime_cfg: &Config,
     runtime_cgroup: &RuntimeCgroup,
     debug_visibility: &DebugWindowVisibility,
-    active_wine: &Arc<Mutex<Option<WineProcessHandle>>>,
+    shutdown_requested: &AtomicBool,
     runtime_state: &Arc<Mutex<RuntimeState>>,
     generation: u64,
     control_rx: &mpsc::Receiver<ControlCommand>,
@@ -417,11 +421,21 @@ fn run_runtime_session(
         }
     }
 
+    if shutdown_requested.load(Ordering::Relaxed) {
+        return Ok(RuntimeLoopExit::Stop);
+    }
+
+    let mut runtime_cfg = runtime_cfg.clone();
+    let _display_isolation = display_isolation::start_for_config(&mut runtime_cfg)?;
+    if shutdown_requested.load(Ordering::Relaxed) {
+        return Ok(RuntimeLoopExit::Stop);
+    }
+
     info!(cfg = ?runtime_cfg, ?runtime_cfg.capture, "starting we-layerd run mode");
     ensure_runtime_access()?;
     let wine = WineProcessHandle::spawn(&runtime_cfg.wine)?;
-    if let Ok(mut guard) = active_wine.lock() {
-        *guard = Some(wine.clone());
+    if shutdown_requested.load(Ordering::Relaxed) {
+        return Ok(RuntimeLoopExit::Stop);
     }
 
     let cgroup_on_spawn = runtime_cgroup.clone();
@@ -447,7 +461,7 @@ fn run_runtime_session(
         match window_finder::find_window_for_process(&runtime_cfg.capture, wine_pid)? {
             Some(found) => {
                 info!(window = found.window, scanned = found.scanned_windows, "using X11 window");
-                apply_debug_window_setup(runtime_cfg, debug_visibility, found.window);
+                apply_debug_window_setup(&runtime_cfg, debug_visibility, found.window);
                 if let Some(path) = runtime_cfg.capture.debug_save_frame_png.as_deref() {
                     let frame = capture_xcomposite::capture_single_frame(found.window)?;
                     capture_xcomposite::save_frame_png(&frame, Path::new(path))?;
@@ -470,10 +484,10 @@ fn run_runtime_session(
             }
         };
 
-    let exit = if matches!(gnome::resolve_backend(runtime_cfg), ResolvedBackend::GnomeShell) {
+    let exit = if matches!(gnome::resolve_backend(&runtime_cfg), ResolvedBackend::GnomeShell) {
         let runtime_state = runtime_state.clone();
         gnome::run_window_bridge(
-            runtime_cfg,
+            &runtime_cfg,
             &runtime_cfg.capture,
             capture_window,
             wine_pid,
@@ -511,9 +525,6 @@ fn run_runtime_session(
         )?
     };
 
-    if let Ok(mut guard) = active_wine.lock() {
-        *guard = None;
-    }
     Ok(exit)
 }
 
@@ -587,7 +598,9 @@ fn switch_wallpaper(cfg: &Config) -> Result<()> {
 }
 
 fn can_hot_switch_between(current_cfg: &Config, next_cfg: &Config) -> bool {
-    ensure_switchable_runtime(current_cfg).is_ok() && ensure_switchable_runtime(next_cfg).is_ok()
+    ensure_switchable_runtime(current_cfg).is_ok()
+        && ensure_switchable_runtime(next_cfg).is_ok()
+        && current_cfg.isolation == next_cfg.isolation
 }
 
 fn ensure_switchable_runtime(cfg: &Config) -> Result<()> {
@@ -701,24 +714,39 @@ fn apply_debug_window_setup(cfg: &Config, debug_visibility: &DebugWindowVisibili
             warn!(error = %err, window, "failed to set debug window mouse passthrough");
         }
     }
-    if debug_visibility.auto_hide {
+    if debug_visibility.auto_hide && cfg.isolation.mode == IsolationMode::None {
         if let Err(err) = debug_visibility.hide() {
             warn!(error = %err, "failed to auto-hide debug window");
         }
     }
 }
 
-fn install_runtime_ctrlc_handler(active_wine: Arc<Mutex<Option<WineProcessHandle>>>) -> Result<()> {
-    ctrlc::set_handler(move || {
-        warn!("received Ctrl+C, terminating active runtime");
-        if let Ok(guard) = active_wine.lock() {
-            if let Some(handle) = guard.as_ref() {
-                if let Err(err) = handle.terminate() {
-                    warn!(error = %err, "failed to terminate wine process on Ctrl+C");
-                }
-            }
+fn request_runtime_shutdown(
+    control_tx: &mpsc::Sender<ControlCommand>,
+    shutdown_requested: &AtomicBool,
+) -> Result<bool, mpsc::SendError<ControlCommand>> {
+    if shutdown_requested.swap(true, Ordering::SeqCst) {
+        return Ok(false);
+    }
+
+    control_tx.send(ControlCommand::Stop).map(|()| true)
+}
+
+fn install_runtime_ctrlc_handler(
+    control_tx: mpsc::Sender<ControlCommand>,
+    shutdown_requested: Arc<AtomicBool>,
+) -> Result<()> {
+    ctrlc::set_handler(move || match request_runtime_shutdown(&control_tx, &shutdown_requested) {
+        Ok(true) => {
+            warn!("received Ctrl+C, requesting runtime shutdown");
         }
-        std::process::exit(130);
+        Ok(false) => {
+            warn!("received Ctrl+C while runtime shutdown is already in progress");
+        }
+        Err(_) => {
+            warn!("received Ctrl+C, but runtime control channel is closed");
+            std::process::exit(130);
+        }
     })
     .context("failed to register Ctrl+C handler")
 }
@@ -726,9 +754,15 @@ fn install_runtime_ctrlc_handler(active_wine: Arc<Mutex<Option<WineProcessHandle
 #[cfg(test)]
 mod tests {
     use super::{
-        can_hot_switch_between, RuntimeMode, RuntimePhase, RuntimeState, RuntimeWallpaperType,
+        can_hot_switch_between, request_runtime_shutdown, RuntimeMode, RuntimePhase, RuntimeState,
+        RuntimeWallpaperType,
     };
-    use crate::config::{Config, RuntimeConfig};
+    use std::sync::atomic::AtomicBool;
+
+    use crate::{
+        config::{Config, IsolationMode, RuntimeConfig},
+        ipc::ControlCommand,
+    };
 
     #[test]
     fn hot_switch_requires_window_runtime_on_both_sides() {
@@ -753,6 +787,31 @@ mod tests {
     }
 
     #[test]
+    fn hot_switch_rejects_isolation_boundary_changes() {
+        let current = switchable_scene_config();
+        let mut next = current.clone();
+        next.isolation.mode = IsolationMode::GamescopeHeadless;
+        assert!(!can_hot_switch_between(&current, &next));
+
+        let mut next = current.clone();
+        next.isolation.mode = IsolationMode::GamescopeHeadless;
+        next.isolation.width = Some(2560);
+        assert!(!can_hot_switch_between(&current, &next));
+    }
+
+    #[test]
+    fn ctrlc_request_sends_single_stop() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let requested = AtomicBool::new(false);
+
+        assert_eq!(request_runtime_shutdown(&tx, &requested), Ok(true));
+        assert_eq!(request_runtime_shutdown(&tx, &requested), Ok(false));
+
+        assert_eq!(rx.try_recv().expect("stop command"), ControlCommand::Stop);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
     fn stale_generation_does_not_override_current_phase() {
         let cfg = Config::default();
         let mut state = RuntimeState::new(&cfg);
@@ -764,5 +823,16 @@ mod tests {
 
         assert_eq!(state.generation, current_generation);
         assert_eq!(state.phase, RuntimePhase::Starting);
+    }
+
+    fn switchable_scene_config() -> Config {
+        Config {
+            runtime: Some(RuntimeConfig {
+                mode: RuntimeMode::WineLayerd,
+                wallpaper_type: RuntimeWallpaperType::Scene,
+                video_file: None,
+            }),
+            ..Config::default()
+        }
     }
 }
