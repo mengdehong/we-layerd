@@ -91,7 +91,7 @@ pub enum WineCommandMode {
     CommandOnly,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IsolationConfig {
     #[serde(default)]
     pub mode: IsolationMode,
