@@ -29,6 +29,11 @@ pub struct UiSettings {
     pub proton_path: String,
     pub fps_limit: String,
     pub show_fps: bool,
+    pub isolation_mode: IsolationModeOption,
+    pub isolation_command: String,
+    pub isolation_width: String,
+    pub isolation_height: String,
+    pub isolation_startup_timeout_secs: String,
     pub borderless: bool,
     pub hide_debug_window: bool,
     pub disable_debug_window_input: bool,
@@ -93,6 +98,21 @@ impl fmt::Display for LauncherChoice {
 pub enum CgroupModeOption {
     Detect,
     LimitWine,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsolationModeOption {
+    None,
+    GamescopeHeadless,
+}
+
+impl fmt::Display for IsolationModeOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::None => write!(f, "Disabled"),
+            Self::GamescopeHeadless => write!(f, "Gamescope Headless"),
+        }
+    }
 }
 
 impl fmt::Display for CgroupModeOption {
@@ -175,6 +195,31 @@ pub fn build_settings_overlay<'a>(
         checkbox(ui_settings.show_fps)
             .label("Show realtime FPS")
             .on_toggle(Message::ShowFpsToggled),
+        text("Display Isolation").size(18),
+        pick_list(
+            vec![IsolationModeOption::None, IsolationModeOption::GamescopeHeadless],
+            Some(ui_settings.isolation_mode),
+            Message::IsolationModeSelected,
+        )
+        .padding(10),
+        text("Isolation Command").size(14),
+        text_input("gamescope", &ui_settings.isolation_command)
+            .on_input(Message::IsolationCommandChanged)
+            .padding(10),
+        text("Isolation Width").size(14),
+        text_input("blank = wallpaper width", &ui_settings.isolation_width)
+            .on_input(Message::IsolationWidthChanged)
+            .padding(10),
+        text("Isolation Height").size(14),
+        text_input("blank = wallpaper height", &ui_settings.isolation_height)
+            .on_input(Message::IsolationHeightChanged)
+            .padding(10),
+        text("Isolation Startup Timeout (secs)").size(14),
+        text_input("10", &ui_settings.isolation_startup_timeout_secs)
+            .on_input(Message::IsolationStartupTimeoutChanged)
+            .padding(10),
+        text("`gamescope_headless` keeps the Wine/X11 window off the host compositor window tree.")
+            .size(12),
         checkbox(ui_settings.borderless)
             .label("Open scene/web wallpaper window as borderless")
             .on_toggle(Message::BorderlessToggled),

@@ -12,12 +12,12 @@ use iced::{
 };
 use settings_panel::{
     build_settings_overlay, detect_supported_resolutions, pick_initial_resolution,
-    CgroupModeOption, ExecutableVariantOption, LauncherChoice, LauncherModeOption,
-    ResolutionOption, UiSettings,
+    CgroupModeOption, ExecutableVariantOption, IsolationModeOption, LauncherChoice,
+    LauncherModeOption, ResolutionOption, UiSettings,
 };
 use we_core::{
     config::{
-        build_config, load_launch_settings, save_config, CgroupMode, LaunchSettings,
+        build_config, load_launch_settings, save_config, CgroupMode, IsolationMode, LaunchSettings,
         WindowsLauncher,
     },
     steam::{self, WallpaperEngineInstallState},
@@ -77,6 +77,11 @@ enum Message {
     WorkshopPathPicked(Option<PathBuf>),
     FpsLimitChanged(String),
     ShowFpsToggled(bool),
+    IsolationModeSelected(IsolationModeOption),
+    IsolationCommandChanged(String),
+    IsolationWidthChanged(String),
+    IsolationHeightChanged(String),
+    IsolationStartupTimeoutChanged(String),
     BorderlessToggled(bool),
     HideDebugWindowToggled(bool),
     DisableDebugWindowInputToggled(bool),
@@ -253,6 +258,31 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ShowFpsToggled(value) => {
             app.ui_settings.show_fps = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::IsolationModeSelected(value) => {
+            app.ui_settings.isolation_mode = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::IsolationCommandChanged(value) => {
+            app.ui_settings.isolation_command = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::IsolationWidthChanged(value) => {
+            app.ui_settings.isolation_width = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::IsolationHeightChanged(value) => {
+            app.ui_settings.isolation_height = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
+        Message::IsolationStartupTimeoutChanged(value) => {
+            app.ui_settings.isolation_startup_timeout_secs = value;
             sync_launch_settings(app);
             Task::none()
         }
@@ -547,6 +577,22 @@ impl App {
             proton_path: launch_settings.proton_path.clone().unwrap_or_default(),
             fps_limit: launch_settings.fps_limit.to_string(),
             show_fps: launch_settings.show_fps,
+            isolation_mode: match launch_settings.isolation_mode {
+                IsolationMode::None => IsolationModeOption::None,
+                IsolationMode::GamescopeHeadless => IsolationModeOption::GamescopeHeadless,
+            },
+            isolation_command: launch_settings.isolation_command.clone(),
+            isolation_width: launch_settings
+                .isolation_width
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            isolation_height: launch_settings
+                .isolation_height
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            isolation_startup_timeout_secs: launch_settings
+                .isolation_startup_timeout_secs
+                .to_string(),
             borderless: launch_settings.borderless,
             hide_debug_window: launch_settings.hide_debug_window,
             disable_debug_window_input: launch_settings.disable_debug_window_input,
@@ -703,6 +749,20 @@ fn sync_launch_settings_from_ui(ui_settings: &UiSettings, launch_settings: &mut 
     launch_settings.wine_command = ui_settings.wine_command.clone();
     launch_settings.proton_path = non_empty_trimmed(&ui_settings.proton_path);
     launch_settings.show_fps = ui_settings.show_fps;
+    launch_settings.isolation_mode = match ui_settings.isolation_mode {
+        IsolationModeOption::None => IsolationMode::None,
+        IsolationModeOption::GamescopeHeadless => IsolationMode::GamescopeHeadless,
+    };
+    launch_settings.isolation_command = if ui_settings.isolation_command.trim().is_empty() {
+        "gamescope".to_string()
+    } else {
+        ui_settings.isolation_command.trim().to_string()
+    };
+    launch_settings.isolation_width = parse_optional_u32(&ui_settings.isolation_width);
+    launch_settings.isolation_height = parse_optional_u32(&ui_settings.isolation_height);
+    if let Ok(v) = ui_settings.isolation_startup_timeout_secs.trim().parse::<u64>() {
+        launch_settings.isolation_startup_timeout_secs = v.max(1);
+    }
     launch_settings.borderless = ui_settings.borderless;
     launch_settings.play_in_window_title = "WE-DEBUG-WINDOW".to_string();
     launch_settings.wm_class_contains =
@@ -772,6 +832,15 @@ fn non_empty_trimmed(input: &str) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+fn parse_optional_u32(input: &str) -> Option<u32> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        trimmed.parse::<u32>().ok().filter(|value| *value > 0)
     }
 }
 
@@ -872,10 +941,12 @@ fn detect_system_theme() -> Theme {
 mod tests {
     use super::{
         infer_executable_variant,
-        settings_panel::{CgroupModeOption, LauncherModeOption, ResolutionOption, UiSettings},
+        settings_panel::{
+            CgroupModeOption, IsolationModeOption, LauncherModeOption, ResolutionOption, UiSettings,
+        },
         sync_launch_settings_from_ui,
     };
-    use we_core::config::LaunchSettings;
+    use we_core::config::{IsolationMode, LaunchSettings};
 
     #[test]
     fn sync_launch_settings_copies_workshop_path_from_ui() {
@@ -888,6 +959,11 @@ mod tests {
             proton_path: String::new(),
             fps_limit: "144".to_string(),
             show_fps: true,
+            isolation_mode: IsolationModeOption::GamescopeHeadless,
+            isolation_command: "gamescope-custom".to_string(),
+            isolation_width: "2560".to_string(),
+            isolation_height: "1600".to_string(),
+            isolation_startup_timeout_secs: "12".to_string(),
             borderless: true,
             hide_debug_window: true,
             disable_debug_window_input: false,
@@ -907,6 +983,11 @@ mod tests {
         assert_eq!(launch_settings.wallpaper_exe, "/tmp/wallpaper32.exe");
         assert_eq!(launch_settings.width, 1920);
         assert_eq!(launch_settings.height, 1080);
+        assert_eq!(launch_settings.isolation_mode, IsolationMode::GamescopeHeadless);
+        assert_eq!(launch_settings.isolation_command, "gamescope-custom");
+        assert_eq!(launch_settings.isolation_width, Some(2560));
+        assert_eq!(launch_settings.isolation_height, Some(1600));
+        assert_eq!(launch_settings.isolation_startup_timeout_secs, 12);
     }
 }
 

@@ -10,6 +10,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub general: GeneralConfig,
     #[serde(default)]
+    pub isolation: IsolationConfig,
+    #[serde(default)]
     pub wine: WineConfig,
     #[serde(default)]
     pub capture: CaptureConfig,
@@ -57,6 +59,28 @@ pub struct WineConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsolationConfig {
+    #[serde(default)]
+    pub mode: IsolationMode,
+    #[serde(default = "default_isolation_command")]
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default = "default_isolation_startup_timeout_secs")]
+    pub startup_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IsolationMode {
+    #[default]
+    None,
+    GamescopeHeadless,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -130,6 +154,11 @@ pub struct LaunchSettings {
     pub proton_path: Option<String>,
     pub fps_limit: u32,
     pub show_fps: bool,
+    pub isolation_mode: IsolationMode,
+    pub isolation_command: String,
+    pub isolation_width: Option<u32>,
+    pub isolation_height: Option<u32>,
+    pub isolation_startup_timeout_secs: u64,
     pub width: u32,
     pub height: u32,
     pub x: i32,
@@ -156,6 +185,11 @@ impl Default for LaunchSettings {
             proton_path: None,
             fps_limit: 30,
             show_fps: false,
+            isolation_mode: IsolationMode::None,
+            isolation_command: default_isolation_command(),
+            isolation_width: None,
+            isolation_height: None,
+            isolation_startup_timeout_secs: default_isolation_startup_timeout_secs(),
             width: 2560,
             height: 1600,
             x: 0,
@@ -217,6 +251,7 @@ impl Default for AppConfig {
                 hidden_workspace_name: "top".to_string(),
                 disable_debug_window_input: false,
             },
+            isolation: IsolationConfig::default(),
             wine: WineConfig {
                 command: "wine".to_string(),
                 command_mode: WineCommandMode::ExeWithArgs,
@@ -236,6 +271,26 @@ impl Default for AppConfig {
     }
 }
 
+impl Default for IsolationConfig {
+    fn default() -> Self {
+        Self {
+            mode: IsolationMode::None,
+            command: default_isolation_command(),
+            width: None,
+            height: None,
+            startup_timeout_secs: default_isolation_startup_timeout_secs(),
+        }
+    }
+}
+
+fn default_isolation_command() -> String {
+    "gamescope".to_string()
+}
+
+fn default_isolation_startup_timeout_secs() -> u64 {
+    10
+}
+
 pub fn build_config(
     settings: &LaunchSettings,
     wallpaper_type: WallpaperType,
@@ -249,6 +304,11 @@ pub fn build_config(
     cfg.general.hide_debug_window = settings.hide_debug_window;
     cfg.general.hidden_workspace_name = settings.hidden_workspace_name.clone();
     cfg.general.disable_debug_window_input = settings.disable_debug_window_input;
+    cfg.isolation.mode = settings.isolation_mode;
+    cfg.isolation.command = settings.isolation_command.clone();
+    cfg.isolation.width = settings.isolation_width;
+    cfg.isolation.height = settings.isolation_height;
+    cfg.isolation.startup_timeout_secs = settings.isolation_startup_timeout_secs.max(1);
     cfg.wine.command = settings.wine_command.clone();
     cfg.wine.command_mode = WineCommandMode::ExeWithArgs;
     cfg.wine.wallpaper_exe = settings.wallpaper_exe.clone();
@@ -422,6 +482,11 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     settings.hide_debug_window = cfg.general.hide_debug_window;
     settings.hidden_workspace_name = cfg.general.hidden_workspace_name;
     settings.disable_debug_window_input = cfg.general.disable_debug_window_input;
+    settings.isolation_mode = cfg.isolation.mode;
+    settings.isolation_command = cfg.isolation.command;
+    settings.isolation_width = cfg.isolation.width;
+    settings.isolation_height = cfg.isolation.height;
+    settings.isolation_startup_timeout_secs = cfg.isolation.startup_timeout_secs.max(1);
 
     settings.wm_class_contains = cfg.capture.wm_class_contains;
     settings.play_in_window_title = cfg.capture.title_contains;
@@ -476,7 +541,9 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{build_config, load_launch_settings, LaunchSettings, WindowsLauncher};
+    use super::{
+        build_config, load_launch_settings, IsolationMode, LaunchSettings, WindowsLauncher,
+    };
     use crate::wallpaper::WallpaperType;
 
     fn unique_temp_path(name: &str) -> PathBuf {
@@ -562,5 +629,54 @@ mode = "detect"
             cfg.wine.env.get("STEAM_COMPAT_DATA_PATH").map(String::as_str),
             Some("/other-steam-root/steamapps/compatdata/431960")
         );
+    }
+
+    #[test]
+    fn load_launch_settings_reads_isolation_config() {
+        let path = unique_temp_path("isolation-config.toml");
+        let toml = r#"
+[general]
+fps_limit = 30
+restart_wine_on_exit = true
+refind_window_on_capture_error = true
+show_fps = false
+fps_report_interval_secs = 1
+scale_mode = "cover"
+hide_debug_window = true
+hidden_workspace_name = "top"
+disable_debug_window_input = false
+
+[isolation]
+mode = "gamescope_headless"
+command = "gamescope-custom"
+width = 2560
+height = 1600
+startup_timeout_secs = 12
+
+[wine]
+command = "wine"
+command_mode = "exe_with_args"
+wallpaper_exe = "/tmp/wallpaper64.exe"
+args = ["-playInWindow", "WE-DEBUG-WINDOW"]
+
+[capture]
+wm_class_contains = "wallpaper64"
+title_contains = "WE-DEBUG-WINDOW"
+
+[cgroup]
+enabled = false
+mode = "detect"
+"#;
+
+        fs::write(&path, toml).expect("failed to write temp config");
+
+        let settings = load_launch_settings(&path).expect("isolation config should load");
+        assert_eq!(settings.isolation_mode, IsolationMode::GamescopeHeadless);
+        assert_eq!(settings.isolation_command, "gamescope-custom");
+        assert_eq!(settings.isolation_width, Some(2560));
+        assert_eq!(settings.isolation_height, Some(1600));
+        assert_eq!(settings.isolation_startup_timeout_secs, 12);
+
+        let _ = fs::remove_file(path);
     }
 }
